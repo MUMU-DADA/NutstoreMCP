@@ -23,12 +23,15 @@ C:\Program Files\Nutstore\bin-7.2.12\
 # 1. 构建并同步插件（不需要管理员）
 .\deploy\build.ps1
 
-# 2. 先预演，看会改什么（不需要管理员）
+# 2. 先预演，看会改什么（不需要管理员，不弹 UAC）
 .\deploy\install.ps1 -WhatIf
 
-# 3. 真正安装（**以管理员身份运行**的 PowerShell）
+# 3. 真正安装 —— 会**自动弹 UAC 提权**，在普通 PowerShell 里跑就行
 .\deploy\install.ps1
 ```
+
+第 3 步会自动通过 UAC 重启自己（新开一个管理员窗口继续跑，输出在那个窗口里）。
+提权窗口跑完不会立刻消失，会等你按 Enter —— 免得还没看清结果窗口就关了。
 
 然后**重启坚果云客户端**。
 
@@ -90,11 +93,10 @@ enabled=false
 ## 卸载还原
 
 ```powershell
-# 以管理员身份运行
 .\deploy\install.ps1 -Uninstall
 ```
 
-它会删除两个 DLL 并**从备份还原客户端配置**。备份是安装时自动建的
+同样会自动提权。它会删除两个 DLL 并**从备份还原客户端配置**。备份是安装时自动建的
 （`NutstoreClient.exe.config.nutstore-mcp-backup`），只备份一次，不会被后续安装覆盖。
 
 ## 出问题怎么办
@@ -102,8 +104,13 @@ enabled=false
 **客户端起不来** —— 这是最需要避免的情况，所以桥里所有代码都包了异常、
 配置找不到就什么都不做。万一还是出问题：
 
-1. 以管理员身份运行 `.\deploy\install.ps1 -Uninstall`
+1. 跑 `.\deploy\install.ps1 -Uninstall`（会自动弹 UAC）
 2. 或者手工把 `NutstoreClient.exe.config.nutstore-mcp-backup` 覆盖回 `NutstoreClient.exe.config`
+   （这一步是纯文件复制，如果连 UAC 都来不及走，可以在 PE 里或用能提权的资源管理器完成）
+3. 实在不行，手工编辑 `NutstoreClient.exe.config`，删掉这两行：
+   `<appDomainManagerAssembly value="NutstoreMcp.Bridge" />` 和
+   `<appDomainManagerType value="NutstoreMcp.Bridge.BridgeDomainManager" />`。
+   **只要这两行没了，桥绝对不会被加载** —— 这是最后的保底手段。
 
 **客户端能起来但插件没加载** —— 看 `bridge.log`：
 
