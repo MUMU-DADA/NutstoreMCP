@@ -36,7 +36,9 @@ public sealed class UiHook : MarshalByRefObject, IUiHook
 
     public string Ping()
     {
-        try
+        // 必须走 UI 线程：Application.Current.Windows 是 DispatcherObject，
+        // 从桥的后台线程直接读会抛「调用线程无法访问此对象」。
+        return OnUiThread(() =>
         {
             var app = Application.Current;
             return Json.Obj(
@@ -47,11 +49,7 @@ public sealed class UiHook : MarshalByRefObject, IUiHook
                 ("windowCount", app?.Windows.Count ?? 0),
                 ("wpfVersion", typeof(Window).Assembly.GetName().Version?.ToString()),
                 ("hookLocation", SafeLocation()));
-        }
-        catch (Exception ex)
-        {
-            return Fail(ex);
-        }
+        });
     }
 
     public string DescribeWindows()
@@ -391,6 +389,20 @@ public sealed class UiHook : MarshalByRefObject, IUiHook
 /// </summary>
 internal static class Json
 {
+    /// <summary>
+    /// 已经是合法 JSON 的片段，嵌入时**不加引号也不转义**。
+    ///
+    /// 没有这个类型的话，Obj 会把 Json.Array(...) 返回的字符串当成普通字符串
+    /// 再转义一层，产出 "windows":"[{\"type\":...}]" 这种「JSON 里套 JSON 字符串」——
+    /// 解析端拿到的是一坨字符串而不是数组。
+    /// </summary>
+    public readonly struct Raw(string json)
+    {
+        public string Json { get; } = json;
+
+        public override string ToString() => Json;
+    }
+
     public static string Obj(params (string Key, object? Value)[] pairs)
     {
         var sb = new StringBuilder("{");
@@ -408,17 +420,18 @@ internal static class Json
         return sb.Append('}').ToString();
     }
 
-    public static string Array(IEnumerable<string> rawJsonItems)
-        => "[" + string.Join(",", rawJsonItems) + "]";
+    public static Raw Array(IEnumerable<string> rawJsonItems)
+        => new("[" + string.Join(",", rawJsonItems) + "]");
 
-    public static string StringArray(IEnumerable<string> values)
-        => "[" + string.Join(",", values.Select(v => Quote(v))) + "]";
+    public static Raw StringArray(IEnumerable<string> values)
+        => new("[" + string.Join(",", values.Select(v => Quote(v))) + "]");
 
     public static string Quote(string? s) => s is null ? "null" : "\"" + Escape(s) + "\"";
 
     private static string Value(object? v) => v switch
     {
         null => "null",
+        Raw raw => raw.Json,
         bool b => b ? "true" : "false",
         string s => Quote(s),
         int i => i.ToString(CultureInfo.InvariantCulture),
