@@ -4,26 +4,7 @@ using System.Text.Json;
 namespace NutstoreMcp.Plugin.L3;
 
 /// <summary>
-/// 用**坚果云客户端自己的 DAO** 读取同步配置。
-///
-/// <para>
-/// 这是真正的 L3：数据来自客户端的模型（<c>NSSandbox</c>），而不是我猜的表结构。
-/// L2 那套直接读 sqlite 的做法依赖我对表名和字段的理解，客户端一升级就可能错；
-/// 走它自己的解析器则天然跟着版本走。
-/// </para>
-///
-/// <para>
-/// <b>数据安全（本类的核心设计）</b>：<c>NSSandboxDAO.ReadAllSandboxesFromDb</c>
-/// 接受一个数据库路径，但它内部用什么连接模式打开我控制不了 —— 万一是可写的，
-/// 它就可能动到真实数据库。
-/// 所以这里**先把数据库复制一份**，把副本路径交给它。
-/// 副本用完即删，真实数据库从头到尾没被这个进程打开过。
-/// </para>
-///
-/// <para>
-/// 复制时必须连 <c>-wal</c> / <c>-shm</c> 一起 —— 坚果云用 WAL 模式，
-/// 只拷主库会读到旧快照甚至损坏。
-/// </para>
+/// 用坚果云客户端自己的 DAO 读取同步配置。
 /// </summary>
 internal static class SandboxApi
 {

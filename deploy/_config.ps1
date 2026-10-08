@@ -3,22 +3,7 @@
     NutstoreClient.exe.config 的补丁与还原逻辑。
 
 .DESCRIPTION
-    为什么单独抽出来：这是整个仓库里**唯一能弄坏客户端本身**的代码。
-    `appDomainManagerAssembly` / `appDomainManagerType` 写错、或写坏 XML，
-    坚果云就起不来了 —— 比插件不工作严重得多，而且用户不一定知道是我们干的。
-
-    抽成按路径操作的函数之后，可以拿临时文件反复跑（含失败路径），
-    不必真的去改 Program Files 下的配置。风险最高的代码应该是最可测的。
-
-    配置形态（写在 <runtime> 最前面，部分配置节有 schema 顺序要求）：
-
-        <configuration>
-          <runtime>
-            <appDomainManagerAssembly value="NutstoreMcp.Bridge" />
-            <appDomainManagerType value="NutstoreMcp.Bridge.BridgeDomainManager" />
-            ... 原有内容不动 ...
-          </runtime>
-        </configuration>
+    按路径操作，便于拿临时文件测试（含失败路径）。详见 ARCHITECTURE.md。
 #>
 
 $script:AppDomainManagerTags = @('appDomainManagerAssembly', 'appDomainManagerType')

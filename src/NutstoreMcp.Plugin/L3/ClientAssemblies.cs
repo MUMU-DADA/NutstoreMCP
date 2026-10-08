@@ -4,19 +4,7 @@ using System.Text.Json;
 namespace NutstoreMcp.Plugin.L3;
 
 /// <summary>
-/// 在**插件的独立子域**里加载坚果云客户端自己的程序集，从而调用它的内部 API。
-///
-/// <para>
-/// 为什么不去默认域调：默认域有 UI 钩子，但钩子的改动要重启客户端才生效。
-/// 而插件在子域里、可以热重载 —— 把客户端 API 的调用放在这里，迭代成本低得多。
-/// </para>
-///
-/// <para><b>为什么这样是安全的</b>：子域和客户端默认域是隔离的。即使客户端程序集
-/// 在子域里加载失败、类型初始化炸掉，**崩的也只是子域**，MCP 连接断开而已，
-/// 客户端的同步线程完全不受影响。这正是当初坚持 AppDomain 隔离换来的余量。</para>
-///
-/// <para>客户端的依赖（Prism / Unity / log4net 等）都在它自己的安装目录里，
-/// 用一个 AssemblyResolve 兜住。</para>
+/// 在插件子域里加载坚果云客户端程序集，用于调用它的内部 API。
 /// </summary>
 internal static class ClientAssemblies
 {

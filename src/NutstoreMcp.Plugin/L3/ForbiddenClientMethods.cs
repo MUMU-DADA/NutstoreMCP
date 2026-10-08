@@ -4,19 +4,6 @@ namespace NutstoreMcp.Plugin.L3;
 
 /// <summary>
 /// 永远不允许经 MCP 调用的客户端方法。
-///
-/// <para>
-/// <b>为什么要在代码里拦，而不只是写在文档里</b>：文档拦不住一个热情过头的实现 ——
-/// 只要有人加一个「通用调用客户端 API」的工具（这几乎是必然会发生的需求），
-/// 这些方法就会自动变成可调用的。而它们的共同点是**后果不可逆**：
-/// 注销同步根、解绑沙箱、清空本地数据。
-/// </para>
-///
-/// <para>
-/// 所以这里是一道**代码级闸门**：任何面向客户端的调用通道都应该先过
-/// <see cref="Check"/>。denylist 比 allowlist 弱，但面对一个庞大的、
-/// 还在持续测绘中的 API 面，allowlist 不现实 —— 至少把已知的悬崖围起来。
-/// </para>
 /// </summary>
 public static class ForbiddenClientMethods
 {

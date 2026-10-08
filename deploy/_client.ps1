@@ -3,19 +3,7 @@
     deploy/ 下各脚本共用的客户端目录发现逻辑。
 
 .DESCRIPTION
-    为什么单独一个文件：build.ps1 和 install.ps1 都需要找客户端目录，
-    而它们原先各自写了一份 `Get-ChildItem -Recurse | Select-Object -First 1`。
-
-    那个写法在客户端**只有一个版本**时看着没问题，一旦坚果云自动更新、
-    目录下出现 bin-7.2.12 和 bin-7.2.13 两个，`-First 1` 拿到的就是
-    文件系统返回顺序里的第一个 —— 通常是**旧的**。后果：
-
-      · install.ps1 会去给已经废弃的目录打补丁 → 用户启动新客户端时桥不存在，
-        插件静默不加载，而报错信息完全指不到这个原因
-      · build.ps1 的契约比对会拿错目录，得出假的一致/不一致结论
-
-    插件侧的 ClientAssemblies 已经按版本倒序取最新，这里保持一致。
-    两份实现各写各的正是漂移的来源，所以抽成一个文件由两边 dot-source。
+    build.ps1 和 install.ps1 共用，避免两处各写一份而漂移。详见 ARCHITECTURE.md。
 #>
 
 <#
