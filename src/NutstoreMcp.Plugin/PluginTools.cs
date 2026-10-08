@@ -140,6 +140,20 @@ public sealed class PluginTools
         }
     }
 
+    [McpServerTool(Name = "nutstore_l3_forbidden_methods", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
+    [Description("列出永远不允许经 MCP 调用的客户端方法及理由（注销同步根、解绑沙箱、重建对象表等后果不可逆的操作）。这些是代码级闸门，不只是文档。")]
+    public static string L3ForbiddenMethods()
+    {
+        try
+        {
+            return L3.ForbiddenClientMethods.Describe();
+        }
+        catch (Exception ex)
+        {
+            return Error(ex);
+        }
+    }
+
     [McpServerTool(Name = "nutstore_l3_env", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
     [Description("报告插件子域里的基础路径（AppData、当前目录、入口程序集等）。用于诊断客户端静态初始化为什么在子域里失败。只读。")]
     public static string L3Env()

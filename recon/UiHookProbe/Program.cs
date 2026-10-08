@@ -37,6 +37,8 @@ internal static class Program
         failures += Check("L3 写入守卫：全部满足也只预演", Guard_FullySatisfiedStillDryRun);
         failures += Check("L3 写入守卫：缺沙箱状态 fail-closed", Guard_MissingSyncStateRefused);
         failures += Check("L3 写入守卫：已绑定的沙箱拒绝重绑", Guard_AlreadySyncedSandboxRefused);
+        failures += Check("L3 禁止清单：危险客户端方法全被拦下", Forbidden_KnownDangerousMethodsBlocked);
+        failures += Check("L3 禁止清单：正常方法不被误伤", Forbidden_SafeMethodsNotBlocked);
 
         Console.WriteLine();
         Console.WriteLine(failures == 0 ? "══ 全部通过 ══" : $"══ {failures} 项失败 ══");
@@ -327,6 +329,59 @@ internal static class Program
         }
 
         return (bad.Count == 0, bad.Count == 0 ? "SyncedToDisk / SyncPlaceholder 均被拒" : string.Join(",", bad));
+    }
+
+    private static (bool, string) Forbidden_KnownDangerousMethodsBlocked()
+    {
+        // 这些方法一旦被通用调用通道暴露出去，后果不可逆
+        string[] mustBlock =
+        [
+            "RemoveSandbox",
+            "MigrateSandboxPath",
+            "MigrateSandboxObjectTableToUnicodeNoCaseCollation",
+            "UnregisterAllNutstoreSyncRoots",
+            "UnregisterSyncRootsOfAccount",
+            "UnregisterSyncRoot",
+            "DisconnectSyncRoot",
+            "DisableSyncRootOnDemandPopulation",
+        ];
+
+        var missed = mustBlock
+            .Where(m => NutstoreMcp.Plugin.L3.ForbiddenClientMethods.Check("Some.Type", m) is null)
+            .ToList();
+
+        // 大小写不该成为绕过手段
+        var caseMissed = NutstoreMcp.Plugin.L3.ForbiddenClientMethods.Check(null, "removesandbox") is null;
+
+        if (caseMissed)
+        {
+            missed.Add("removesandbox（小写变体）");
+        }
+
+        return (missed.Count == 0,
+            missed.Count == 0 ? $"{mustBlock.Length} 个危险方法 + 大小写变体全部拦下" : "漏掉: " + string.Join(", ", missed));
+    }
+
+    private static (bool, string) Forbidden_SafeMethodsNotBlocked()
+    {
+        // 误伤会让闸门形同虚设 —— 实现者会干脆绕过它
+        string[] mustPass =
+        [
+            "ReadAllSandboxesFromDb",
+            "ReadAllSandboxes",
+            "GetSandboxObjectsCount",
+            "RegisterAsync",
+            "ConnectSyncRootCallbacks",
+            "GetSyncRootStandardInfo",
+            "SetSyncLocation",
+        ];
+
+        var wrongly = mustPass
+            .Where(m => NutstoreMcp.Plugin.L3.ForbiddenClientMethods.Check("Some.Type", m) is not null)
+            .ToList();
+
+        return (wrongly.Count == 0,
+            wrongly.Count == 0 ? $"{mustPass.Length} 个正常方法未被误伤" : "误伤: " + string.Join(", ", wrongly));
     }
 
     /// <summary>从 Json.Obj 产出的 JSON 里抠出 type 字段。</summary>
