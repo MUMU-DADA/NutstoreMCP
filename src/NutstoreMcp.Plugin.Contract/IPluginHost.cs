@@ -77,4 +77,15 @@ public interface IUiHook
     /// 在匹配的控件里按名字/类型查找，返回 JSON 字符串。
     /// </summary>
     string FindElements(string typeFilter, string elementNameOrType, int limit);
+
+    /// <summary>
+    /// 把**所有**窗口的完整控件树导出到一个文件，返回文件路径（JSON 包装）。
+    ///
+    /// <para>
+    /// 存在的理由：钩子活在默认域、装进去卸不掉，改一次就要重启客户端。
+    /// 所以每次重启都该拿到**完整**材料，而不是每次只探一个点 ——
+    /// 拿到文件后可以离线反复分析，不必再来一轮。
+    /// </para>
+    /// </summary>
+    string DumpAll(string directory);
 }

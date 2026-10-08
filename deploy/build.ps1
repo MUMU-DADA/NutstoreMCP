@@ -120,7 +120,26 @@ home=$Target
 
 Ok "配置已写入 $ini"
 
-Write-Host ""
-Write-Host "下一步：" -ForegroundColor White
-Write-Host "  以**管理员**身份运行：.\deploy\install.ps1"
-Write-Host "  它会备份客户端配置、放入桥、打补丁。之后重启坚果云即可。"
+# ── 4. 通知客户端热重载 ──
+#
+# 插件跑在子 AppDomain 里，子域可以卸载重建 —— 所以改插件**不需要重启客户端**。
+# 桥在盯这个文件，看到就卸载子域、按新的 bridge.ini 重新加载。
+#
+# 只在客户端正在运行时才写：没跑的话桥的重载监听还没起来，
+# 留下陈旧的触发文件会让下次启动时立刻多跑一次重载。
+Step '通知热重载 …'
+$client = Get-Process -Name 'NutstoreClient' -ErrorAction SilentlyContinue
+if ($client) {
+    Set-Content (Join-Path $BaseDir 'reload.request') (Get-Date -Format 'O') -Encoding UTF8
+    Ok "已通知（客户端 PID $($client.Id -join ', ') 会在 1.5 秒内重载插件）"
+    Write-Host '     MCP 连接会断开需重连，但坚果云本身不用重启。' -ForegroundColor DarkGray
+}
+else {
+    Write-Host '  客户端没在运行，跳过（下次启动直接加载新版本）' -ForegroundColor DarkGray
+}
+
+Write-Host ''
+Write-Host 'UI 钩子在客户端默认域，.NET Framework 卸不掉默认域里已加载的程序集 ——' -ForegroundColor Yellow
+Write-Host '改 NutstoreMcp.UiHook 仍然需要重启客户端。' -ForegroundColor Yellow
+Write-Host ''
+Write-Host '桥本身没装过或刚更新过：以管理员运行 .\deploy\install.ps1' -ForegroundColor White

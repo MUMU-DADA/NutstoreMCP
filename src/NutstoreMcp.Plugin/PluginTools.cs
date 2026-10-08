@@ -152,6 +152,46 @@ public sealed class PluginTools
         }
     }
 
+    [McpServerTool(Name = "nutstore_ui_dump", ReadOnly = false, Destructive = false, Idempotent = true, OpenWorld = false)]
+    [Description("把客户端所有窗口的完整控件树导出到一个文件，返回文件路径。写文件，不改客户端状态。用于离线分析界面结构，避免反复重启客户端。")]
+    public static string UiDump(
+        [Description("导出目录，留空则用插件旁的 dumps 目录")] string? directory = null)
+    {
+        var ui = PluginEntry.Ui;
+        if (ui is null)
+        {
+            return UiUnavailable;
+        }
+
+        try
+        {
+            var dir = string.IsNullOrWhiteSpace(directory)
+                ? Path.Combine(PluginEntry.Home, "dumps")
+                : directory!;
+
+            return ui.DumpAll(dir);
+        }
+        catch (Exception ex)
+        {
+            return Error(ex);
+        }
+    }
+
+    [McpServerTool(Name = "nutstore_plugin_reload", ReadOnly = false, Destructive = false, Idempotent = true, OpenWorld = false)]
+    [Description("热重载插件：桥会卸载子 AppDomain 并重新加载。改插件代码后用它，不必重启坚果云。注意：UI 钩子在客户端默认域，卸载不了，钩子的改动仍需重启客户端。")]
+    public static string Reload()
+    {
+        var trigger = PluginEntry.RequestReload();
+
+        return JsonSerializer.Serialize(new
+        {
+            requested = true,
+            triggerFile = trigger,
+            note = "桥最多 1.5 秒后重载。MCP 连接会断开，客户端需要重连。",
+            limitation = "只重载插件；UI 钩子在默认域卸不掉，改它仍需重启客户端。",
+        }, Indented);
+    }
+
     private static string Error(Exception ex) => JsonSerializer.Serialize(new
     {
         ok = false,

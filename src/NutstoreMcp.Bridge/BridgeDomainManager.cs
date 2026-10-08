@@ -32,6 +32,42 @@ public sealed class BridgeDomainManager : AppDomainManager
     /// <summary>子 AppDomain 的名字。桥在子域里会看到它，用来避免递归加载自己。</summary>
     internal const string PluginDomainName = "NutstoreMcp.Plugin";
 
+    // ── 插件状态。热重载要卸载重建子域，所以引用必须留着。 ──
+
+    private static readonly object ReloadGate = new();
+    private static AppDomain? _pluginDomain;
+    private static IPluginHost? _pluginHost;
+
+    /// <summary>UI 钩子活在默认域，**装进去就卸不掉** —— 它的改动必须重启客户端。</summary>
+    private static IUiHook? _uiHook;
+
+    /// <summary>
+    /// 重载触发文件。出现即重载，用完删掉。
+    ///
+    /// 用文件而不是 IPC：桥在 Main 之前加载，不能依赖任何额外的库；
+    /// 而且写文件的可以是任何东西 —— build.ps1 构建完写一个，插件工具也能写一个，
+    /// 都不需要改桥。
+    /// </summary>
+    private static string ReloadTriggerPath => Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+        "NutstoreMcp", "reload.request");
+
+    /// <summary>首次引导：建 UI 钩子 → 装插件 → 开始盯重载。</summary>
+    private static void Boot(BridgeConfig config, BridgeLog log)
+    {
+        // ── 先在**默认域**里建 UI 钩子 ──
+        // WPF 对象跨不了 AppDomain，客户端的窗口全在默认域，
+        // 所以碰界面的代码必须留在这边，插件通过跨域代理调用。
+        _uiHook = CreateUiHook(config.Home!, log);
+
+        lock (ReloadGate)
+        {
+            LoadPlugin(config, log);
+        }
+
+        WatchForReload(log);
+    }
+
     public override void InitializeNewDomain(AppDomainSetup appDomainInfo)
     {
         base.InitializeNewDomain(appDomainInfo);
@@ -71,8 +107,7 @@ public sealed class BridgeDomainManager : AppDomainManager
                 IsBackground = true,
                 Name = "NutstoreMcp.Bridge",
             };
-            worker.Start();
-        }
+            worker.Start();        }
         catch (Exception ex)
         {
             // 连日志都可能失败，所以再兜一层
@@ -87,10 +122,17 @@ public sealed class BridgeDomainManager : AppDomainManager
         }
     }
 
-    private static void Boot(BridgeConfig config, BridgeLog log)
+    /// <summary>
+    /// 装载插件（或重载）。
+    ///
+    /// <para>
+    /// 子 AppDomain 可以卸载重建 —— 这是插件能热重载的全部依据。
+    /// 对比之下 UI 钩子在默认域，.NET Framework 无法卸载默认域里已加载的程序集，
+    /// 所以**钩子的改动仍然必须重启客户端**。
+    /// </para>
+    /// </summary>
+    private static void LoadPlugin(BridgeConfig config, BridgeLog log)
     {
-        AppDomain? domain = null;
-
         try
         {
             var pluginDll = Path.Combine(config.Home!, "NutstoreMcp.Plugin.dll");
@@ -119,18 +161,15 @@ public sealed class BridgeDomainManager : AppDomainManager
                 AppDomainManagerType = string.Empty,
             };
 
-            // ── 先在**默认域**里建 UI 钩子 ──
-            // WPF 对象跨不了 AppDomain，客户端的窗口全在默认域，
-            // 所以碰界面的代码必须留在这边，插件通过跨域代理调用。
-            var uiHook = CreateUiHook(config.Home!, log);
-
-            domain = AppDomain.CreateDomain(PluginDomainName, null, setup);
+            var domain = AppDomain.CreateDomain(PluginDomainName, null, setup);
+            _pluginDomain = domain;
 
             // 跨域代理必须经共享接口转换 —— 透明代理上的 GetType() 返回
             // MarshalByRefObject 而不是真实类型，反射拿不到真实方法。
             var host = (IPluginHost)domain.CreateInstanceAndUnwrap(
                 "NutstoreMcp.Plugin",
                 "NutstoreMcp.Plugin.PluginDomainHost");
+            _pluginHost = host;
 
             var error = host.Start(config.Home!);
 
@@ -144,21 +183,18 @@ public sealed class BridgeDomainManager : AppDomainManager
             }
 
             // UI 钩子要在插件起来之后再接 —— 失败也不影响 MCP 本身可用
-            if (uiHook is not null)
+            if (_uiHook is not null)
             {
                 try
                 {
-                    host.AttachUi(uiHook);
-                    log.Info($"UI 钩子已接入: {uiHook.Ping()}");
+                    host.AttachUi(_uiHook);
+                    log.Info("UI 钩子已接入");
                 }
                 catch (Exception ex)
                 {
                     log.Error("UI 钩子接入失败（不影响 MCP 工具）", ex);
                 }
             }
-
-            // 域对象留活口：不要在这里 Unload，插件要一直跑。
-            GC.KeepAlive(host);
         }
         catch (Exception ex)
         {
@@ -166,16 +202,107 @@ public sealed class BridgeDomainManager : AppDomainManager
 
             try
             {
-                if (domain is not null)
+                if (_pluginDomain is not null)
                 {
-                    AppDomain.Unload(domain);
+                    AppDomain.Unload(_pluginDomain);
                 }
             }
             catch (Exception)
             {
                 // 卸载失败无所谓
             }
+
+            _pluginDomain = null;
+            _pluginHost = null;
         }
+    }
+
+    private static void UnloadPlugin(BridgeLog log)
+    {
+        // 先让它自己收摊：HttpListener 不 Dispose 的话端口会一直被占，
+        // 重载后的新实例就绑不上了。
+        try
+        {
+            _pluginHost?.Stop();
+        }
+        catch (Exception ex)
+        {
+            log.Error("停止插件时出错（继续卸载）", ex);
+        }
+
+        try
+        {
+            if (_pluginDomain is not null)
+            {
+                AppDomain.Unload(_pluginDomain);
+            }
+        }
+        catch (Exception ex)
+        {
+            log.Error("卸载插件域失败", ex);
+        }
+
+        _pluginDomain = null;
+        _pluginHost = null;
+    }
+
+    /// <summary>
+    /// 盯着重载触发文件。
+    ///
+    /// <para>
+    /// 触发方式是**文件**而不是别的：桥在 Main 之前加载，不能依赖任何 IPC 库；
+    /// 而且写文件的可以是任何东西 —— deploy/build.ps1 构建完写一个，
+    /// 插件的工具也能写一个，都不用改桥。
+    /// </para>
+    /// </summary>
+    private static void WatchForReload(BridgeLog log)
+    {
+        var worker = new Thread(() =>
+        {
+            while (true)
+            {
+                try
+                {
+                    Thread.Sleep(1500);
+
+                    if (!File.Exists(ReloadTriggerPath))
+                    {
+                        continue;
+                    }
+
+                    File.Delete(ReloadTriggerPath);
+                    log.Info("收到重载请求 —— 卸载子域并重新加载插件");
+
+                    lock (ReloadGate)
+                    {
+                        UnloadPlugin(log);
+
+                        // 重新读配置：build.ps1 每次构建都会指向新的版本目录
+                        var fresh = BridgeConfig.Load();
+                        if (fresh.IsUsable)
+                        {
+                            LoadPlugin(fresh, log);
+                        }
+                        else
+                        {
+                            log.Error($"重载时配置不可用（{fresh.Source}），插件保持停止", null!);
+                        }
+                    }
+
+                    log.Info("插件已重载");
+                }
+                catch (Exception ex)
+                {
+                    log.Error("重载失败（插件可能已停止，重启客户端可恢复）", ex);
+                }
+            }
+        })
+        {
+            IsBackground = true,
+            Name = "NutstoreMcp.ReloadWatcher",
+        };
+
+        worker.Start();
     }
 
     /// <summary>

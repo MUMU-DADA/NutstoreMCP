@@ -61,11 +61,46 @@ public static class PluginEntry
     /// </summary>
     public static IUiHook? Ui { get; private set; }
 
+    /// <summary>插件所在目录。热重载触发文件写在它的上一级。</summary>
+    public static string Home { get; private set; } = string.Empty;
+
     /// <summary>接上 UI 钩子。桥在插件启动后调用。</summary>
     public static void AttachUi(IUiHook? ui)
     {
         Ui = ui;
         _log?.Info(ui is null ? "UI 钩子为空 —— 界面工具不可用" : "UI 钩子已接入");
+    }
+
+    /// <summary>
+    /// 请求热重载：写一个触发文件，桥看到后会卸载子域并重新加载插件。
+    ///
+    /// <para>
+    /// 为什么用文件：插件不能卸载自己（进程不能自杀重建），必须由默认域里的桥来做。
+    /// 而桥在 Main 之前加载、不能依赖 IPC 库，文件是最省事又最稳的信号。
+    /// </para>
+    /// <para>
+    /// <b>局限性</b>：UI 钩子在默认域，重载动不了它 —— 钩子的改动仍然要重启客户端。
+    /// 本方法只对插件（MCP 服务器 + 工具）有效。
+    /// </para>
+    /// </summary>
+    public static string RequestReload()
+    {
+        try
+        {
+            var baseDir = Path.GetDirectoryName(Home.TrimEnd(Path.DirectorySeparatorChar));
+            if (string.IsNullOrEmpty(baseDir))
+            {
+                return "无法确定触发文件位置";
+            }
+
+            var trigger = Path.Combine(baseDir, "reload.request");
+            File.WriteAllText(trigger, DateTime.Now.ToString("O"), Encoding.UTF8);
+            return trigger;
+        }
+        catch (Exception ex)
+        {
+            return $"写触发文件失败: {ex.GetType().Name}: {ex.Message}";
+        }
     }
 
     /// <summary>
@@ -83,6 +118,7 @@ public static class PluginEntry
             try
             {
                 LastError = null;
+                Home = home;
                 var config = PluginConfig.Load(home);
                 _log = new PluginLog(config.LogPath);
                 _log.Info($"插件启动 v{Version}，home={home}，宿主={AppDomain.CurrentDomain.FriendlyName}");

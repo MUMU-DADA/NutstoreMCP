@@ -158,6 +158,79 @@ public sealed class UiHook : MarshalByRefObject, IUiHook
         });
     }
 
+    /// <summary>
+    /// 把所有窗口的完整控件树写到一个文件。
+    ///
+    /// <para>
+    /// 钩子活在默认域、装进去卸不掉，改一次就要重启客户端。所以每次重启都必须
+    /// 拿到**完整**材料 —— 拿到文件后可以离线反复分析，而不是每次只探一个点、
+    /// 然后又要一轮重启。
+    /// </para>
+    /// </summary>
+    public string DumpAll(string directory)
+    {
+        return OnUiThread(() =>
+        {
+            var app = Application.Current;
+            if (app is null)
+            {
+                return Json.Obj(("available", false), ("reason", "Application.Current 为空"));
+            }
+
+            Directory.CreateDirectory(directory);
+            var file = Path.Combine(directory, $"ui-dump-{DateTime.Now:yyyyMMdd-HHmmss}.json");
+
+            var sb = new StringBuilder();
+            sb.Append("{\"dumpedAt\":").Append(Json.Quote(DateTime.Now.ToString("O")));
+            sb.Append(",\"windows\":[");
+
+            var first = true;
+            var totalNodes = 0;
+
+            foreach (Window w in app.Windows)
+            {
+                if (!first)
+                {
+                    sb.Append(',');
+                }
+
+                first = false;
+
+                var nodes = new List<string>();
+                var truncated = false;
+
+                // 导出模式给足预算：这里的目的是「一次拿全」，
+                // 慢一点无所谓，漏掉东西才要命。
+                var budget = 200000;
+                if (w.Content is DependencyObject content)
+                {
+                    Walk(content, 0, 60, nodes, ref budget, ref truncated);
+                }
+
+                totalNodes += nodes.Count;
+
+                sb.Append(Json.Obj(
+                    ("type", w.GetType().FullName),
+                    ("title", w.Title),
+                    ("isVisible", w.IsVisible),
+                    ("isLoaded", w.IsLoaded),
+                    ("truncated", truncated),
+                    ("nodeCount", nodes.Count),
+                    ("nodes", Json.Array(nodes))));
+            }
+
+            sb.Append("],\"totalNodes\":").Append(totalNodes).Append('}');
+
+            File.WriteAllText(file, sb.ToString(), Encoding.UTF8);
+
+            return Json.Obj(
+                ("ok", true),
+                ("file", file),
+                ("windowCount", app.Windows.Count),
+                ("totalNodes", totalNodes));
+        });
+    }
+
     // ── 内部实现 ──
 
     // net48 没有 Math.Clamp 和 String.Contains(string, StringComparison) ——
