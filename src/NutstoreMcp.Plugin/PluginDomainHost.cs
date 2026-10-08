@@ -41,6 +41,12 @@ public sealed class PluginDomainHost : MarshalByRefObject, IPluginHost
 
     public string? LogPath() => PluginEntry.LogPath;
 
+    /// <summary>
+    /// 接上 UI 钩子。<paramref name="ui"/> 是桥在默认域里创建的对象 ——
+    /// 跨域传进来时会自动变成透明代理。
+    /// </summary>
+    public void AttachUi(IUiHook? ui) => PluginEntry.AttachUi(ui);
+
     /// <summary>把状态打包成 JSON，避免跨域传复杂对象。</summary>
     public string StatusJson()
     {

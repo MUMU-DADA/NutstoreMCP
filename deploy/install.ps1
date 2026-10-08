@@ -130,6 +130,22 @@ if (-not (Test-Admin) -and -not $WhatIfPreference) {
     throw '仍没有管理员权限 —— 提权未生效。请手动开一个「以管理员身份运行」的 PowerShell 再跑。'
 }
 
+# ── 客户端必须先关掉 ──
+# 桥 DLL 被运行中的客户端加载着，文件是锁的，Copy-Item 会失败。
+# 而且改配置也要等重启才生效 —— 与其拷到一半失败留下不一致状态，不如直接说清楚。
+if (-not $WhatIfPreference) {
+    $running = Get-Process -Name 'NutstoreClient' -ErrorAction SilentlyContinue
+    if ($running) {
+        Write-Host ''
+        Write-Host "❌ 坚果云客户端正在运行（PID $($running.Id -join ', ')）" -ForegroundColor Red
+        Write-Host ''
+        Write-Host '   桥的 DLL 被它加载着，现在替换会失败。请先退出坚果云，再重跑本脚本。' -ForegroundColor Yellow
+        Write-Host '   （退出后不需要手动启动 —— 装完再启动就行）' -ForegroundColor DarkGray
+        Wait-IfElevated
+        exit 1
+    }
+}
+
 # ── 卸载 ──
 if ($Uninstall) {
     Step '移除桥文件 …'

@@ -33,12 +33,9 @@
     <PackageReference Include="Microsoft.Extensions.Hosting" Version="10.0.12" />
   </ItemGroup>
 
-  <!-- WPF 类型：设置界面注入要用。由宿主进程提供，不复制到输出目录。 -->
-  <ItemGroup>
-    <Reference Include="PresentationCore" />
-    <Reference Include="PresentationFramework" />
-    <Reference Include="WindowsBase" />
-    <Reference Include="System.Xaml" />
-  </ItemGroup>
+  <!-- 刻意**不引用 WPF**：插件跑在独立子域，碰不到客户端的 WPF 对象
+       （Application.Current 在子域里是 null）。界面操作全部经 IUiHook
+       转发给默认域里跑的 NutstoreMcp.UiHook。
+       少一个引用就少一份在子域里加载失败的可能。 -->
 
 </Project>

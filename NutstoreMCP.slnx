@@ -8,6 +8,7 @@
   <Folder Name="/src/插件/">
     <Project Path="src/NutstoreMcp.Plugin.Contract/NutstoreMcp.Plugin.Contract.csproj" />
     <Project Path="src/NutstoreMcp.Plugin/NutstoreMcp.Plugin.csproj" />
+    <Project Path="src/NutstoreMcp.UiHook/NutstoreMcp.UiHook.csproj" />
     <Project Path="src/NutstoreMcp.Bridge/NutstoreMcp.Bridge.csproj" />
     <Project Path="src/NutstoreMcp.Host/NutstoreMcp.Host.csproj" />
   </Folder>

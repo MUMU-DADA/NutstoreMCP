@@ -1,0 +1,30 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net48</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>NutstoreMcp.UiHook</AssemblyName>
+    <RootNamespace>NutstoreMcp.UiHook</RootNamespace>
+    <PlatformTarget>x64</PlatformTarget>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+  </PropertyGroup>
+
+  <!-- 这个程序集被加载进客户端**默认 AppDomain**，所以必须零外部依赖：
+       WPF 来自 GAC（客户端本来就在用），契约是本项目的。
+       绝不能引入 Microsoft.Extensions.* 之类 —— 那会跟客户端已有的版本打架，
+       而默认域里打架的后果是客户端自己崩。 -->
+  <ItemGroup>
+    <Reference Include="PresentationCore" />
+    <Reference Include="PresentationFramework" />
+    <Reference Include="WindowsBase" />
+    <Reference Include="System.Xaml" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\NutstoreMcp.Plugin.Contract\NutstoreMcp.Plugin.Contract.csproj" />
+  </ItemGroup>
+
+</Project>

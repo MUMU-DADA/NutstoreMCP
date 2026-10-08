@@ -119,6 +119,11 @@ public sealed class BridgeDomainManager : AppDomainManager
                 AppDomainManagerType = string.Empty,
             };
 
+            // ── 先在**默认域**里建 UI 钩子 ──
+            // WPF 对象跨不了 AppDomain，客户端的窗口全在默认域，
+            // 所以碰界面的代码必须留在这边，插件通过跨域代理调用。
+            var uiHook = CreateUiHook(config.Home!, log);
+
             domain = AppDomain.CreateDomain(PluginDomainName, null, setup);
 
             // 跨域代理必须经共享接口转换 —— 透明代理上的 GetType() 返回
@@ -138,8 +143,21 @@ public sealed class BridgeDomainManager : AppDomainManager
                 log.Error($"插件启动失败: {error}", null!);
             }
 
+            // UI 钩子要在插件起来之后再接 —— 失败也不影响 MCP 本身可用
+            if (uiHook is not null)
+            {
+                try
+                {
+                    host.AttachUi(uiHook);
+                    log.Info($"UI 钩子已接入: {uiHook.Ping()}");
+                }
+                catch (Exception ex)
+                {
+                    log.Error("UI 钩子接入失败（不影响 MCP 工具）", ex);
+                }
+            }
+
             // 域对象留活口：不要在这里 Unload，插件要一直跑。
-            // 卸载由插件自身的 Stop 或进程退出处理。
             GC.KeepAlive(host);
         }
         catch (Exception ex)
@@ -157,6 +175,46 @@ public sealed class BridgeDomainManager : AppDomainManager
             {
                 // 卸载失败无所谓
             }
+        }
+    }
+
+    /// <summary>
+    /// 在**默认 AppDomain** 里加载 UI 钩子。
+    ///
+    /// <para>
+    /// 钩子程序集放在插件目录（不是程序目录）：它要跟着插件一起迭代，
+    /// 而程序目录的写入要提权。它只引用 WPF（GAC）和契约，没有版本冲突风险，
+    /// 所以可以安全地加载进默认域。
+    /// </para>
+    /// </summary>
+    private static IUiHook? CreateUiHook(string home, BridgeLog log)
+    {
+        try
+        {
+            var hookDll = Path.Combine(home, "NutstoreMcp.UiHook.dll");
+            if (!File.Exists(hookDll))
+            {
+                log.Info($"没有 UI 钩子（{hookDll}）—— 界面相关的工具会不可用");
+                return null;
+            }
+
+            // 按字节加载：不锁文件，插件目录可以随时重编
+            var asm = Assembly.Load(File.ReadAllBytes(hookDll));
+            var type = asm.GetType("NutstoreMcp.UiHook.UiHook", throwOnError: false);
+            if (type is null)
+            {
+                log.Error("钩子程序集里找不到 NutstoreMcp.UiHook.UiHook", null!);
+                return null;
+            }
+
+            var hook = (IUiHook?)Activator.CreateInstance(type);
+            log.Info($"UI 钩子已加载（默认域）");
+            return hook;
+        }
+        catch (Exception ex)
+        {
+            log.Error("UI 钩子加载失败（不影响 MCP 工具）", ex);
+            return null;
         }
     }
 }

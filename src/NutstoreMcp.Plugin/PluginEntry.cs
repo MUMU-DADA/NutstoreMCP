@@ -5,6 +5,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using ModelContextProtocol.Server;
+using NutstoreMcp.Plugin.Contract;
 using NutstoreMcp.Plugin.Transport;
 
 namespace NutstoreMcp.Plugin;
@@ -48,6 +49,24 @@ public static class PluginEntry
     /// 那时如果只靠日志，故障就成了黑盒。这个属性让调用方**总能**拿到原因。
     /// </summary>
     public static string? LastError { get; private set; }
+
+    /// <summary>
+    /// UI 钩子 —— 由桥在**客户端默认 AppDomain** 里创建后传进来。
+    ///
+    /// <para>
+    /// 插件在独立子域里，WPF 对象跨不了 AppDomain，所以凡是碰界面的操作
+    /// 都要经这个跨域代理转给默认域执行。钩子可能为 <c>null</c>（加载失败），
+    /// 调用方必须容忍。
+    /// </para>
+    /// </summary>
+    public static IUiHook? Ui { get; private set; }
+
+    /// <summary>接上 UI 钩子。桥在插件启动后调用。</summary>
+    public static void AttachUi(IUiHook? ui)
+    {
+        Ui = ui;
+        _log?.Info(ui is null ? "UI 钩子为空 —— 界面工具不可用" : "UI 钩子已接入");
+    }
 
     /// <summary>
     /// 启动插件。<paramref name="home"/> 是插件所在目录（放 <c>plugin.json</c> 的地方）。
@@ -175,38 +194,44 @@ internal sealed class PluginConfig
         try
         {
             var file = Path.Combine(home, "plugin.json");
-            if (!File.Exists(file))
+            if (File.Exists(file))
             {
-                return cfg;
-            }
+                using var doc = JsonDocument.Parse(File.ReadAllText(file, Encoding.UTF8));
+                var root = doc.RootElement;
 
-            using var doc = JsonDocument.Parse(File.ReadAllText(file, Encoding.UTF8));
-            var root = doc.RootElement;
-
-            if (root.TryGetProperty("enabled", out var enabled)
-                && enabled.ValueKind is JsonValueKind.True or JsonValueKind.False)
-            {
-                cfg.Enabled = enabled.GetBoolean();
-            }
-
-            if (root.TryGetProperty("port", out var port)
-                && port.TryGetInt32(out var p) && p is > 1024 and < 65536)
-            {
-                cfg.Port = p;
-            }
-
-            if (root.TryGetProperty("logPath", out var lp) && lp.ValueKind == JsonValueKind.String)
-            {
-                var v = lp.GetString();
-                if (!string.IsNullOrWhiteSpace(v))
+                if (root.TryGetProperty("enabled", out var enabled)
+                    && enabled.ValueKind is JsonValueKind.True or JsonValueKind.False)
                 {
-                    cfg.LogPath = v!;
+                    cfg.Enabled = enabled.GetBoolean();
+                }
+
+                if (root.TryGetProperty("port", out var port)
+                    && port.TryGetInt32(out var p) && p is > 1024 and < 65536)
+                {
+                    cfg.Port = p;
+                }
+
+                if (root.TryGetProperty("logPath", out var lp) && lp.ValueKind == JsonValueKind.String)
+                {
+                    var v = lp.GetString();
+                    if (!string.IsNullOrWhiteSpace(v))
+                    {
+                        cfg.LogPath = v!;
+                    }
                 }
             }
         }
         catch (Exception)
         {
             // 配置坏了就用默认值 —— 宁可起不来也不要抛
+        }
+
+        // 环境变量**最后**生效：用来在不干扰运行中实例的前提下跑第二个实例做测试。
+        // 放在文件之后是刻意的 —— 否则会被 plugin.json 里的值覆盖掉。
+        var envPort = Environment.GetEnvironmentVariable("NUTSTORE_MCP_PORT");
+        if (int.TryParse(envPort, out var ep) && ep is > 1024 and < 65536)
+        {
+            cfg.Port = ep;
         }
 
         return cfg;
