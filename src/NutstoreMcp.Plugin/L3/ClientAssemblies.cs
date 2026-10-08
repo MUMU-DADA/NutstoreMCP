@@ -314,7 +314,59 @@ internal static class ClientAssemblies
             domain = AppDomain.CurrentDomain.FriendlyName,
             isDefaultDomain = AppDomain.CurrentDomain.IsDefaultAppDomain(),
             probes,
+            entryAssemblyExperiment = ExperimentOnEntryAssembly(),
         });
+    }
+
+    /// <summary>
+    /// 验证「<c>GetEntryAssembly()</c> 为空是因为入口程序集没被加载进这个域」这个假设。
+    ///
+    /// <para>
+    /// 若假设成立，客户端那些依赖它的静态初始化就能在子域里跑起来 ——
+    /// L3 的读写路径都不再需要重启客户端。若假设不成立，就得老老实实走默认域。
+    /// 这个实验决定了后续整个架构方向，所以值得单独做一次。
+    /// </para>
+    /// </summary>
+    private static object ExperimentOnEntryAssembly()
+    {
+        string Entry() => Assembly.GetEntryAssembly()?.Location ?? "(null)";
+        int Loaded() => AppDomain.CurrentDomain.GetAssemblies().Length;
+
+        var beforeEntry = Entry();
+        var beforeCount = Loaded();
+
+        var exePath = Path.Combine(ClientDirectory, "NutstoreClient.exe");
+        string loadResult;
+
+        try
+        {
+            if (!File.Exists(exePath))
+            {
+                loadResult = $"客户端 exe 不存在: {exePath}";
+            }
+            else
+            {
+                var asm = Assembly.Load(File.ReadAllBytes(exePath));
+                loadResult = $"已加载 {asm.GetName().Name}";
+            }
+        }
+        catch (Exception ex)
+        {
+            loadResult = $"{ex.GetType().Name}: {ex.Message}";
+        }
+
+        var afterEntry = Entry();
+        var afterCount = Loaded();
+
+        return new
+        {
+            hypothesis = "GetEntryAssembly 为空是因为入口程序集没被加载进子域",
+            exePath,
+            loadResult,
+            before = new { entryAssembly = beforeEntry, loadedCount = beforeCount },
+            after = new { entryAssembly = afterEntry, loadedCount = afterCount },
+            hypothesisHolds = !string.Equals(afterEntry, "(null)", StringComparison.Ordinal),
+        };
     }
 
     private static string Json(object o) => System.Text.Json.JsonSerializer.Serialize(o, new JsonSerializerOptions

@@ -284,21 +284,51 @@ MCP 的价值不该用「能替用户做危险操作」来体现。
 第 4 条刻意保守：**非空本地目录一律拒绝**。判断「这些文件和云端冲不冲突」需要比对两边全量元数据，
 判断错了代价是用户的数据 —— 宁可让用户手动建一个空目录，也不要赌。
 
-### 为什么写入路径现在跑不了（记录以免重复踩）
+### 为什么写入路径现在跑不了（已实测确认，勿重复尝试）
 
-`ReadAllSandboxesFromDb` 在**插件的子 AppDomain** 里调用会抛：
+**子域路线已排除。** 异常链第 4 层：
 
 ```
-TypeInitializationException: 「NutstoreClient.Common.SignedInUsers」的类型初始值设定项引发异常
+ArgumentException: 'path' cannot be an empty string
+  在 Pri.LongPath.Path.NormalizeLongPath
+← NutstoreLib.Utils.DirectoryUtils.APPDATA_NUTSTORE_DIR   （静态构造）
+← NutstoreClient.Common.SignedInUsers                     （静态构造）
+← NSSandbox..ctor
 ```
 
-客户端自己的静态初始化依赖它运行时环境（一批 `Active*Dir` 路径来自
-`SignedInUsers.Instance`，而它的静态构造在进程外起不来 —— 与之前
-protobuf 描述符 NRE 是同一类问题：**混淆后的静态初始化只在客户端默认域里成立**）。
+逐个探测子域的基础路径，**全都正常**（AppData / UserProfile / CurrentDirectory /
+`APPDATA` 环境变量…），只有一个为空：
 
-结论：**任何调用客户端 DAO 的代码都必须跑在默认域**，也就是只能经 `IUiHook`。
-而钩子改动要重启客户端。这条路已经验证过一次（`Reflect` 在子域可用，
-但那只走反射不触发静态构造 —— 一旦真的 `Invoke` 就炸）。
+```
+Assembly.GetEntryAssembly()  →  (null)
+```
+
+**验证过的假设与其否定**：猜想是「入口程序集没被加载进子域」，
+于是把 `NutstoreClient.exe` 加载进来再试 —— 程序集数 51 → 52，
+`GetEntryAssembly()` **仍然为 null**。
+
+这是 CLR 的固有行为：`GetEntryAssembly` 在非默认域里返回 null，
+与程序集是否加载无关。所以**任何依赖它的客户端静态初始化都无法在子域成立**。
+
+结论：调用客户端 DAO 的代码**必须跑在默认域**，只能经 `IUiHook`，而钩子改动要重启客户端。
+反射（`Reflect`）在子域没问题，因为不触发静态构造 —— 一旦真的 `Invoke` 就炸。
+
+### 已验证的写入守卫（`L3/WriteGuards.cs`）
+
+L3 唯一可能丢数据的地方是「把本地目录绑到云端沙箱」，而**这个判断不需要碰客户端** ——
+输入全是普通值（路径、是否存在、条目数、是否重叠）。抽成纯函数后离线穷举验证：
+
+| 探针用例 | 结果 |
+|---|---|
+| 默认全拒（无环境变量、无 confirm） | ✅ |
+| **非空目录必拒** | ✅ 核心数据安全 |
+| 嵌套同步根必拒（相同/子目录/父目录/前缀相似但无关/无关/大小写不同） | ✅ 6/6 |
+| 全部满足 + dryRun 也只预演 | ✅ |
+
+设计立场：**拒绝「我帮你判断安不安全」**。判断本地文件与云端是否冲突需要比对两边
+全量元数据，判断错了代价是用户的文件 —— 所以非空目录一律拒绝。
+
+三道闸：`NUTSTORE_L3_WRITE=1`（默认不存在）+ `confirm=true` + `dryRun` 默认 `true`。
 
 ### 已在插件里落地且安全的部分
 
