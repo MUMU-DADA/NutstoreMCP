@@ -1,0 +1,29 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net48</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>NutstoreMcp.Host</AssemblyName>
+    <RootNamespace>NutstoreMcp.Host</RootNamespace>
+    <PlatformTarget>x64</PlatformTarget>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+  </PropertyGroup>
+
+  <!-- 刻意不引用 NutstoreMcp.Plugin：宿主必须和桥一样，只通过反射 + 子 AppDomain
+       访问插件。如果这里加了 ProjectReference，编译期耦合会掩盖「桥只认
+       Start(string)」这个契约，等真装到客户端里才发现问题。 -->
+
+  <ItemGroup>
+    <ProjectReference Include="..\NutstoreMcp.Plugin.Contract\NutstoreMcp.Plugin.Contract.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Reference Include="System.Net.Http" />
+    <PackageReference Include="System.Text.Json" Version="8.0.5" />
+  </ItemGroup>
+
+</Project>

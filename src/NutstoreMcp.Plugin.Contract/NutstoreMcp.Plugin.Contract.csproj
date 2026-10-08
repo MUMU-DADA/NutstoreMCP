@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>netstandard2.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <AssemblyName>NutstoreMcp.Plugin.Contract</AssemblyName>
+    <RootNamespace>NutstoreMcp.Plugin.Contract</RootNamespace>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+    <!-- 契约永远不升版本：跨 AppDomain 的类型转换按程序集标识匹配，
+         版本一变，桥和插件就对不上了。 -->
+    <Version>1.0.0</Version>
+  </PropertyGroup>
+
+</Project>

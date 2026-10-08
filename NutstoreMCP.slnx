@@ -1,8 +1,19 @@
 <Solution>
-  <Folder Name="/src/">
-    <Project Path="src/NutstoreMcp.csproj" />
+  <!-- 独立进程：.NET 10，走 WebDAV + 本地只读库 -->
+  <Folder Name="/src/独立服务器/">
+    <Project Path="src/NutstoreMcp/NutstoreMcp.csproj" />
   </Folder>
+
+  <!-- 进程内：.NET Framework 4.8，跑在坚果云客户端里 -->
+  <Folder Name="/src/插件/">
+    <Project Path="src/NutstoreMcp.Plugin/NutstoreMcp.Plugin.csproj" />
+    <Project Path="src/NutstoreMcp.Host/NutstoreMcp.Host.csproj" />
+  </Folder>
+
   <Folder Name="/tests/">
-    <Project Path="tests/NutstoreMcp.Tests.csproj" />
+    <Project Path="tests/NutstoreMcp.Tests/NutstoreMcp.Tests.csproj" />
   </Folder>
+
+  <!-- recon/ 的工具是独立的一次性侦查程序，刻意不进解决方案：
+       它们各自有独立的目标框架，混在一起会拖慢常规构建。 -->
 </Solution>
