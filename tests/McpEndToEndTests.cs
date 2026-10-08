@@ -20,7 +20,7 @@ public class McpEndToEndTests
             : "Debug";
 
         var exe = Path.Combine(
-            TestScratch.RepoRoot(), "src", "NutstoreMcp", "bin", configuration, "net10.0-windows", "nutstore-mcp.exe");
+            TestScratch.RepoRoot(), "src", "bin", configuration, "net10.0-windows", "nutstore-mcp.exe");
 
         Assert.True(File.Exists(exe), $"找不到服务端可执行文件：{exe}（请先 dotnet build）");
         return exe;

@@ -59,7 +59,7 @@ NUTSTORE_ROOTS=我的坚果云        # 云端白名单，逗号分隔
 ### 3. 自检
 
 ```powershell
-dotnet run --project src/NutstoreMcp -- --doctor
+dotnet run --project src -- --doctor
 ```
 
 会打印配置、可用的同步文件夹、以及 WebDAV 连通性。**不含任何凭据值。**
@@ -174,8 +174,8 @@ L2 的工具在**没有 WebDAV 凭据**时也能用 —— 它读的是本地库
 
 ```powershell
 dotnet build                                    # 全量构建
-dotnet run --project tests/NutstoreMcp.Tests     # 90 个测试
-dotnet run --project src/NutstoreMcp -- --doctor  # 配置与连通性自检
+dotnet run --project tests                        # 90 个测试
+dotnet run --project src -- --doctor              # 配置与连通性自检
 ```
 
 测试用 **xunit v3 + Microsoft.Testing.Platform**，直接在自身进程内运行。

@@ -20,7 +20,7 @@ $root = $PSScriptRoot
 
 Write-Host "发布 nutstore-mcp（$Configuration / win-x64 / 自包含）…" -ForegroundColor Cyan
 
-dotnet publish (Join-Path $root 'src/NutstoreMcp/NutstoreMcp.csproj') `
+dotnet publish (Join-Path $root 'src/NutstoreMcp.csproj') `
     -c $Configuration `
     -r win-x64 `
     --self-contained true `

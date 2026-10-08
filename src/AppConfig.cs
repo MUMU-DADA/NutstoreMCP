@@ -163,7 +163,7 @@ public sealed class AppConfig
         for (var i = 0; i < 8 && !string.IsNullOrEmpty(dir); i++)
         {
             if (File.Exists(Path.Combine(dir, "ARCHITECTURE.md"))
-                || File.Exists(Path.Combine(dir, "NutstoreMCP.sln")))
+                || File.Exists(Path.Combine(dir, "NutstoreMCP.slnx")))
             {
                 return dir;
             }
