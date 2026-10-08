@@ -103,4 +103,20 @@ public interface IUiHook
     /// </para>
     /// </summary>
     string AddToggle(string title, string subtitle, string stateFile, bool initialChecked);
+
+    /// <summary>
+    /// 在**默认域**里用客户端自己的 DAO 读同步文件夹绑定。
+    ///
+    /// <para>
+    /// 为什么必须在这里做：客户端的静态初始化依赖 <c>Assembly.GetEntryAssembly()</c>，
+    /// 而它在非默认域里恒为 <c>null</c>（CLR 固有行为，已实测 —— 把入口 exe 加载进子域
+    /// 也没用）。所以插件子域里一调就炸在 <c>Path.NormalizeLongPath("")</c>。
+    /// </para>
+    /// <para>
+    /// <b>数据安全</b>：调用前先把数据库连 <c>-wal</c>/<c>-shm</c> 复制一份，
+    /// 让 DAO 读副本。真实数据库全程不被这个进程打开，副本用完即删。
+    /// </para>
+    /// <para>只读，不修改任何客户端状态。</para>
+    /// </summary>
+    string ReadClientSyncFolders();
 }

@@ -156,6 +156,46 @@ public sealed class PluginTools
     [Description("用坚果云客户端自己的 DAO 读取所有同步文件夹绑定（沙箱 ID、云端名、本地路径、是否占位符）。数据来自客户端模型而非猜表结构，客户端升级后更不容易失准。**读的是数据库副本，真实数据库不会被打开**。")]
     public static string L3SyncFolders()
     {
+        // 优先走默认域：客户端那些静态初始化依赖 Assembly.GetEntryAssembly()，
+        // 而它在子域里恒为 null（CLR 固有行为，已实测）。所以默认域是唯一能跑通的地方。
+        var ui = PluginEntry.Ui;
+        if (ui is not null)
+        {
+            try
+            {
+                var viaHook = ui.ReadClientSyncFolders();
+                if (viaHook is not null && viaHook.IndexOf("\"ok\":true", StringComparison.Ordinal) >= 0)
+                {
+                    return viaHook;
+                }
+
+                // 钩子没成功（例如钩子还是旧版本），退回子域实现并说明原因
+                return JsonSerializer.Serialize(new
+                {
+                    ok = false,
+                    viaDefaultDomain = viaHook,
+                    fallback = TryPluginDomain(),
+                    note = "默认域通道不可用（钩子可能是旧版本，需要重启客户端才能更新）。"
+                         + "下面是子域尝试的结果 —— 它注定会失败，因为客户端静态初始化在子域里起不来。",
+                }, Indented);
+            }
+            catch (Exception ex)
+            {
+                // 旧版钩子没有这个方法时会抛 RemotingException
+                return JsonSerializer.Serialize(new
+                {
+                    ok = false,
+                    viaDefaultDomain = $"{ex.GetType().Name}: {ex.Message}",
+                    note = "钩子没有 ReadClientSyncFolders —— 需要重启客户端让新钩子生效。",
+                }, Indented);
+            }
+        }
+
+        return L3.SandboxApi.ReadSyncFolders();
+    }
+
+    private static string TryPluginDomain()
+    {
         try
         {
             return L3.SandboxApi.ReadSyncFolders();

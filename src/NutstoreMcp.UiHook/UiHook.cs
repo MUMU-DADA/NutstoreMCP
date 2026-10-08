@@ -484,6 +484,176 @@ public sealed class UiHook : MarshalByRefObject, IUiHook
         }
     }
 
+    /// <summary>
+    /// 在默认域里用客户端自己的 DAO 读同步文件夹。
+    ///
+    /// <para>
+    /// 客户端那些静态初始化（<c>DirectoryUtils</c>、<c>SignedInUsers</c>）依赖
+    /// <c>Assembly.GetEntryAssembly()</c>，而它在非默认域里恒为 <c>null</c> ——
+    /// 这是 CLR 固有行为，实测把入口 exe 加载进子域也没用。
+    /// 所以这段代码只能待在默认域，也就是这里。
+    /// </para>
+    ///
+    /// <para>
+    /// <b>绝不碰真实数据库</b>：先复制（含 <c>-wal</c>/<c>-shm</c>）再让 DAO 读副本。
+    /// 这是本方法唯一重要的性质 —— 它跑在客户端的域里，一旦写坏就是用户的数据。
+    /// </para>
+    ///
+    /// <para>整体包在 try/catch 里：钩子跑在客户端进程内，异常不能漏出去。</para>
+    /// </summary>
+    public string ReadClientSyncFolders()
+    {
+        try
+        {
+            var appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
+            var db = Path.Combine(appData, "Nutstore", "db1", "nutstore.db");
+
+            if (!File.Exists(db))
+            {
+                return Json.Obj(("ok", false), ("reason", "本地数据库不存在: " + db));
+            }
+
+            var scratch = Path.Combine(Path.GetTempPath(), "NutstoreMcp-hook-" + Guid.NewGuid().ToString("N"));
+
+            try
+            {
+                Directory.CreateDirectory(scratch);
+                var copy = Path.Combine(scratch, "nutstore.db");
+
+                // WAL 模式：只拷主库会拿到旧快照甚至不一致的状态
+                foreach (var suffix in new[] { "", "-wal", "-shm" })
+                {
+                    var src = db + suffix;
+                    if (!File.Exists(src))
+                    {
+                        continue;
+                    }
+
+                    using (var input = new FileStream(src, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
+                    using (var output = new FileStream(copy + suffix, FileMode.Create, FileAccess.Write, FileShare.None))
+                    {
+                        input.CopyTo(output);
+                    }
+                }
+
+                var dao = FindClientType("NutstoreClient.DAO.NSSandboxDAO");
+                if (dao is null)
+                {
+                    return Json.Obj(("ok", false), ("reason", "默认域里找不到 NSSandboxDAO"));
+                }
+
+                var read = dao.GetMethod("ReadAllSandboxesFromDb", BindingFlags.Public | BindingFlags.Static)
+                           ?? dao.GetMethod("ReadAllSandboxesFromDb");
+
+                if (read is null)
+                {
+                    return Json.Obj(("ok", false), ("reason", "ReadAllSandboxesFromDb 不存在"));
+                }
+
+                var list = read.Invoke(null, new object[] { copy }) as System.Collections.IEnumerable;
+                if (list is null)
+                {
+                    return Json.Obj(("ok", false), ("reason", "DAO 返回非集合"));
+                }
+
+                var items = new List<string>();
+                foreach (var item in list)
+                {
+                    if (item is null)
+                    {
+                        continue;
+                    }
+
+                    var t = item.GetType();
+                    string? Prop(string n)
+                    {
+                        try
+                        {
+                            return t.GetProperty(n)?.GetValue(item)?.ToString();
+                        }
+                        catch (Exception)
+                        {
+                            return null;
+                        }
+                    }
+
+                    var localPath = Prop("LocalAbsPath");
+
+                    items.Add(Json.Obj(
+                        ("id", Prop("ID")),
+                        ("name", Prop("Name")),
+                        ("localPath", localPath),
+                        ("isPlaceholder", Prop("IsPlaceholder")),
+                        ("localExists", localPath is not null && Directory.Exists(localPath))));
+                }
+
+                return Json.Obj(
+                    ("ok", true),
+                    ("domain", AppDomain.CurrentDomain.FriendlyName),
+                    ("source", "默认域 + 客户端 NSSandboxDAO（读副本，真库未被打开）"),
+                    ("count", items.Count),
+                    ("sandboxes", new Json.Raw("[" + string.Join(",", items) + "]")));
+            }
+            finally
+            {
+                try
+                {
+                    if (Directory.Exists(scratch))
+                    {
+                        Directory.Delete(scratch, recursive: true);
+                    }
+                }
+                catch (Exception)
+                {
+                    // 删不掉就留着
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            return Json.Obj(
+                ("ok", false),
+                ("reason", ex.GetType().Name + ": " + ex.Message),
+                ("chain", Json.StringArray(Chain(ex))));
+        }
+    }
+
+    private static List<string> Chain(Exception ex)
+    {
+        var result = new List<string>();
+        var depth = 0;
+
+        while (ex is not null && depth++ < 8)
+        {
+            result.Add($"{ex.GetType().Name}: {ex.Message}");
+            ex = ex.InnerException!;
+        }
+
+        return result;
+    }
+
+    /// <summary>在默认域已加载的程序集里找类型。</summary>
+    private static Type? FindClientType(string fullName)
+    {
+        foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
+        {
+            try
+            {
+                var t = asm.GetType(fullName, throwOnError: false);
+                if (t is not null)
+                {
+                    return t;
+                }
+            }
+            catch (Exception)
+            {
+                // 跳过
+            }
+        }
+
+        return null;
+    }
+
     // ── 内部实现 ──
 
     /// <summary>

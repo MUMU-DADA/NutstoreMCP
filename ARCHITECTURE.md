@@ -338,12 +338,29 @@ L3 唯一可能丢数据的地方是「把本地目录绑到云端沙箱」，�
 | `L3/SandboxApi.cs` | 走 DAO 读同步配置。**先复制数据库（含 `-wal`/`-shm`）再读副本**，真库全程不被本进程打开。当前受上述限制调用失败，但复制逻辑和副本清理是正确且必要的 |
 | `nutstore_client_reflect` | 上面那套的 MCP 工具，用来在不确定 API 形状时先看清楚 |
 
-### 下一步（需要用户在场）
+### 下一步（需要用户在场：退出客户端 → `install.ps1` → 重启）
 
-1. 重启客户端让钩子更新
-2. 在 `IUiHook` 加一个**只读**的 `InvokeClientApi(typeName, methodName, argsJson)`，
-   在默认域里调 `ReadAllSandboxesFromDb` —— 读路径可安全落地
-3. 写入路径再单独设计、单独评审、单独开关
+**已写好、等重启后生效的部分**：`IUiHook.ReadClientSyncFolders()` 已在默认域实现
+（同样是复制数据库读副本），插件侧 `nutstore_l3_sync_folders` 会优先走它。
+
+当前调用会优雅返回（实测）：
+
+```json
+{
+  "ok": false,
+  "viaDefaultDomain": "RemotingException: 未在接口找到方法 ReadClientSyncFolders",
+  "note": "钩子没有 ReadClientSyncFolders —— 需要重启客户端让新钩子生效。"
+}
+```
+
+注意契约 DLL 在程序目录和插件目录各有一份，**两处必须一起更新**，
+`build.ps1` 会比对 SHA256 并提示。
+
+重启后依次确认：
+
+1. `nutstore_l3_sync_folders` 是否返回客户端 DAO 的结果（`source` 字段会写明「默认域」）
+2. 写入路径**仍不开**：需要先把 `InitSandbox` 的调用在默认域实现，
+   并经过 `L3/WriteGuards.cs` 的三道闸；这一步应当单独评审，不要顺手打开
 
 ---
 
