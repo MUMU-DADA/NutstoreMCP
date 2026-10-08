@@ -141,5 +141,43 @@ else {
 Write-Host ''
 Write-Host 'UI 钩子在客户端默认域，.NET Framework 卸不掉默认域里已加载的程序集 ——' -ForegroundColor Yellow
 Write-Host '改 NutstoreMcp.UiHook 仍然需要重启客户端。' -ForegroundColor Yellow
-Write-Host ''
-Write-Host '桥本身没装过或刚更新过：以管理员运行 .\deploy\install.ps1' -ForegroundColor White
+
+# ── 5. 检查契约程序集是否两边一致 ──
+#
+# NutstoreMcp.Plugin.Contract.dll 存在于两处：
+#   · 程序目录 —— 桥和 UI 钩子（默认域）绑定的是它
+#   · 插件目录 —— 插件（子域）绑定的是它
+# 两边不一致时，跨域调用会报「未在接口找到方法 X」的 RemotingException，
+# 而那个错误从现象上完全看不出是版本不一致导致的。
+$clientExe = Get-ChildItem 'C:\Program Files\Nutstore' -Recurse -Filter 'NutstoreClient.exe' -ErrorAction SilentlyContinue |
+    Select-Object -First 1
+
+if ($clientExe) {
+    $installedContract = Join-Path $clientExe.DirectoryName 'NutstoreMcp.Plugin.Contract.dll'
+    $stagedContract = Join-Path $Target 'NutstoreMcp.Plugin.Contract.dll'
+
+    if (Test-Path $installedContract) {
+        $a = (Get-FileHash $installedContract -Algorithm SHA256).Hash
+        $b = (Get-FileHash $stagedContract -Algorithm SHA256).Hash
+
+        if ($a -ne $b) {
+            Write-Host ''
+            Write-Host '⚠️  契约程序集两边不一致 —— 必须重装桥，否则跨域调用会报' -ForegroundColor Red
+            Write-Host '   「未在接口找到方法 X」的 RemotingException，且现象上看不出原因。' -ForegroundColor Red
+            Write-Host ''
+            Write-Host '   程序目录: ' -NoNewline; Write-Host $installedContract -ForegroundColor DarkGray
+            Write-Host '   插件目录: ' -NoNewline; Write-Host $stagedContract -ForegroundColor DarkGray
+            Write-Host ''
+            Write-Host '   → 退出坚果云，以管理员运行：.\deploy\install.ps1，再启动坚果云' -ForegroundColor Yellow
+        }
+        else {
+            Write-Host '契约程序集两边一致 ✅' -ForegroundColor DarkGray
+        }
+    }
+    else {
+        Write-Host '桥尚未安装（程序目录里没有契约 DLL）—— 以管理员运行 .\deploy\install.ps1' -ForegroundColor DarkGray
+    }
+}
+else {
+    Write-Host '找不到坚果云客户端 —— 跳过契约一致性检查' -ForegroundColor DarkGray
+}
