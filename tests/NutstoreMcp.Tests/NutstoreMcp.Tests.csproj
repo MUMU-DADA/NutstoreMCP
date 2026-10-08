@@ -33,4 +33,15 @@
     <Using Include="Xunit" />
   </ItemGroup>
 
+  <!-- L3 的安全逻辑是纯函数、不依赖客户端也不依赖 WPF，所以直接链接源码进来测。
+
+       必须链接的理由：这两个文件原先只有 recon/UiHookProbe 覆盖，而那个项目
+       不在解决方案里、dotnet test 也不跑它 —— 结果是跑测试看到 90/90 全绿，
+       却完全不知道「非空目录必拒」这条最重要的规则根本没被验证。
+       安全关键逻辑不能在 CI 视野之外。 -->
+  <ItemGroup>
+    <Compile Include="..\..\src\NutstoreMcp.Plugin\L3\WriteGuards.cs" Link="L3\WriteGuards.cs" />
+    <Compile Include="..\..\src\NutstoreMcp.Plugin\L3\ForbiddenClientMethods.cs" Link="L3\ForbiddenClientMethods.cs" />
+  </ItemGroup>
+
 </Project>
