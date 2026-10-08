@@ -33,9 +33,10 @@ public sealed class PluginTools
     [Description("【默认只预演】把本地空目录绑定为坚果云同步文件夹。这是 L3 唯一可能丢数据的操作，因此放行条件极严：需要环境变量 NUTSTORE_L3_WRITE=1、confirm=true、dryRun=false，且本地目录必须为空、不与现有同步根重叠。任何一条不满足都拒绝执行。**当前执行通道未接通**，即使在满足全部条件时也只返回判定结果。")]
     public static string L3CreateSyncFolder(
         [Description("要绑定的本地目录（必须已存在且为空）")] string localPath,
+        [Description("要绑定的云端沙箱 ID（必须 >0）。用 nutstore_sync_folders 查未绑定的沙箱")] long sandboxId = 0,
         [Description("必须显式传 true 才可能执行")] bool confirm = false,
         [Description("默认 true（只预演不执行）")] bool dryRun = true,
-        [Description("云端沙箱名；留空则用目录名")] string? sandboxName = null,
+        [Description("沙箱的同步状态；必须是 NotSynced 才放行")] string? sandboxSyncState = null,
         [Description("现有同步根路径列表，分号分隔。不传则因无法确认重叠而拒绝")] string? existingBindings = null)
     {
         try
@@ -82,7 +83,9 @@ public sealed class PluginTools
                 LocalPathIsDirectory: isDir,
                 LocalPathIsEmpty: isEmpty,
                 PathAlreadyBound: false,
-                ExistingBindingPaths: bindings);
+                ExistingBindingPaths: bindings,
+                SandboxId: sandboxId,
+                SandboxSyncState: sandboxSyncState);
 
             var verdict = L3.WriteGuards.Evaluate(request);
 
@@ -118,9 +121,8 @@ public sealed class PluginTools
                     isDirectory = isDir,
                     isEmpty,
                     entryCount,
-                    sandboxName = string.IsNullOrWhiteSpace(sandboxName)
-                        ? Path.GetFileName((localPath ?? string.Empty).TrimEnd('\\', '/'))
-                        : sandboxName,
+                    sandboxId,
+                    sandboxSyncState = sandboxSyncState ?? "(未提供 —— 将因无法确认状态而被拒)",
                     existingBindingCount = bindings.Count,
                 },
                 refusals,
@@ -199,6 +201,22 @@ public sealed class PluginTools
         try
         {
             return L3.SandboxApi.ReadSyncFolders();
+        }
+        catch (Exception ex)
+        {
+            return Error(ex);
+        }
+    }
+
+    [McpServerTool(Name = "nutstore_client_search_types", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
+    [Description("按名字子串搜索坚果云客户端的所有类型（跨全部程序集）。用于在不知道类型全名时定位 API。只读，不执行任何客户端代码。")]
+    public static string ClientSearchTypes(
+        [Description("类型名/命名空间子串，例如 Sandbox")] string pattern,
+        [Description("最多返回多少个，默认 80")] int limit = 80)
+    {
+        try
+        {
+            return L3.ClientAssemblies.SearchTypes(pattern, limit);
         }
         catch (Exception ex)
         {

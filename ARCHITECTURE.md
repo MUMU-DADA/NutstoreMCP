@@ -262,32 +262,80 @@ String ToJson() / static NSSandbox FromJson(String)
 
 MCP 的价值不该用「能替用户做危险操作」来体现。
 
-### ⚠️ InitSandbox 若要做，必须满足全部条件
+### 「添加同步文件夹」的完整流程（已测绘）
 
-**先看清它到底需要什么**：`InitSandbox(NSSandbox, perms)` 绑的是**已存在的云端沙箱**。
-而 `NSSandbox` 的构造是：
+**先纠正一个容易搞错的认识**：绑定一个**已存在**的云端沙箱到本地是
+**纯本地操作** —— 不需要远程写。云端内容会被**下载**到本地目录。
+
+所以「创建同步目录」分两种，风险完全不同：
+
+| 操作 | 性质 | 风险 |
+|---|---|---|
+| 把已存在的云端文件夹绑到本地空目录 | 本地 | 低（但要空目录，否则合并冲突） |
+| 在云端新建文件夹 | **远程写** | 高，且用户明确禁止开发期动远程 |
+
+GUI 里那个「添加同步文件夹」= 前者。
+
+**涉及的三个类型**（都在 `NutstoreClient.Legacy.dll` / `Nutstore.ShellNamespace.dll`）：
 
 ```csharp
-public NSSandbox(long id, long magic, string localAbsPath, bool allowUncPath)
+// 云端沙箱 + 可选的本地位置
+class SandboxInfo {
+    Int64  SandboxId      // 服务端分配
+    Int64  SandboxMagic   // 服务端分配
+    String Name, Desc, Owner, ChannelId
+    Caps   Caps
+    List<CapsOnPathBean> PathPerms
+    NSSandbox Sandbox
+    SandboxSyncState SyncState
+    Boolean IsSyncToDisk, DoNotSync, Decoupled, IsPrivate, IsOwner
+    Void SetSyncLocation(String location)   // 设了本地路径就是要绑定
+    Void ClearSyncLocation()
+}
+
+enum Nutstore.Common.SandboxSyncState {
+    NotSynced,        // 云端有、本地没绑  ← 候选
+    SyncedToDisk,     // 已同步到本地
+    SyncPlaceholder,  // 占位符（不占空间）
+}
+
+// 绑定动作（投递到客户端自己的命令队列）
+class DownstreamBindSandboxCommand {
+    DownstreamBindSandboxCommand(SandboxInfo sndInfo)
+}
 ```
 
-`id` 和 `magic` 是**服务端分配的** —— 不能自造。也就是说 GUI 里那个
-「添加同步文件夹」实际是两步：
+**流程**：
 
-1. 在云端建一个沙箱（**远程写操作**）
-2. 拿到服务端返回的 `id`/`magic`，构造 `NSSandbox`，再 `InitSandbox` 绑到本地
+1. 读云端沙箱列表，筛出 `SyncState == NotSynced` 的（L2 的 `nutstore_sync_folders`
+   已经把它们作为 `UnmountedSandbox` 暴露出来了）
+2. 拿它的 `SandboxId` / `SandboxMagic` / `PathPerms`
+3. 选一个**空的**本地目录
+4. `SetSyncLocation(localPath)` → `new DownstreamBindSandboxCommand(info)` 投递
 
-所以**只实现第 2 步是不完整且危险的**：拿不到合法的 id/magic，就只能靠猜，
-而这是唯一可能丢数据的路径。在搞清楚第 1 步怎么走通之前，
-写入路径不应该开始写代码。
+**关键点**：`SandboxId`/`SandboxMagic` 来自服务端，**不能自造**。
+这也意味着不能凭空「创建」一个沙箱 —— 只能绑定已存在的。
+要新建云端文件夹，那是 `NutstoreClient.Connection.NutstoreRequest+CreateDirectoryRequestEntity`
+（远程写，本项目的开发期红线）。
 
-真正的数据丢失风险不在「写数据库」，而在**把本地目录和云端沙箱绑在一起之后会发生什么**：
+**危险信号**：`NSSandboxContext.WipeDataWhenLostAccess` —— 客户端有
+「失去访问权时清空本地数据」的行为。任何 L3 操作都要注意别触发它。
 
-| 场景 | 后果 |
+### 写入守卫已验证的用例（`L3/WriteGuards.cs`，探针 11 项全绿）
+
+| 用例 | 结果 |
 |---|---|
-| 本地目录非空 + 云端沙箱非空 | 双向合并，**冲突/覆盖** |
-| 本地目录是已有同步根的子目录 | 嵌套同步，行为未定义 |
-| 本地目录指向别的软件的数据目录 | 那些文件会被上传到云 |
+| 默认全拒（无环境变量、无 confirm） | ✅ |
+| **非空目录必拒** —— 实测对 `%USERPROFILE%\Documents` 即使 confirm+dryRun=false+合法沙箱 ID 也拒绝 | ✅ |
+| 嵌套同步根必拒（相同/子目录/父目录/前缀相似但无关/无关/大小写不同） | ✅ 6/6 |
+| 缺沙箱状态 fail-closed（留空 ≠ 无所谓） | ✅ |
+| 已绑定沙箱（SyncedToDisk / SyncPlaceholder）拒绝重绑 | ✅ |
+| 全部满足 + dryRun 也只预演 | ✅ |
+
+设计立场：**拒绝「我帮你判断安不安全」**。判断本地文件与云端是否冲突需要比对两边
+全量元数据，判断错了代价是用户的文件 —— 所以非空目录一律拒绝。
+
+三道闸：`NUTSTORE_L3_WRITE=1`（默认不存在）+ `confirm=true` + `dryRun` 默认 `true`。
 
 所以设计上要求**全部**满足才放行：
 

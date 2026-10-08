@@ -369,6 +369,112 @@ internal static class ClientAssemblies
         };
     }
 
+    /// <summary>
+    /// 按名字模式搜索客户端所有类型。
+    ///
+    /// <para>
+    /// 没有这个就只能靠猜类型名 —— 而客户端的类型散在十几个程序集里、
+    /// 命名空间还经常和直觉不符（<c>NSSandbox</c> 不在 <c>NutstoreClient.DAO</c>，
+    /// 实际落在 <c>NutstoreClient.Legacy.dll</c>）。猜错的成本是每猜一次一轮往返。
+    /// </para>
+    /// </summary>
+    public static string SearchTypes(string pattern, int limit)
+    {
+        if (!Available)
+        {
+            return Json(new { ok = false, reason = "找不到客户端目录" });
+        }
+
+        var cap = Math.Max(1, Math.Min(limit, 300));
+        var hits = new List<string>();
+        var scanned = 0;
+        var failed = new List<string>();
+
+        foreach (var asm in LoadAllClientAssemblies(failed))
+        {
+            Type[] types;
+            try
+            {
+                types = asm.GetTypes();
+            }
+            catch (ReflectionTypeLoadException ex)
+            {
+                // 缺依赖时部分类型加载不出来，用能拿到的那部分
+                types = ex.Types.Where(t => t is not null).ToArray()!;
+            }
+            catch (Exception)
+            {
+                continue;
+            }
+
+            foreach (var t in types)
+            {
+                scanned++;
+                var name = t.FullName ?? t.Name;
+                if (name.IndexOf(pattern, StringComparison.OrdinalIgnoreCase) < 0)
+                {
+                    continue;
+                }
+
+                if (hits.Count >= cap)
+                {
+                    break;
+                }
+
+                var kind = t.IsInterface ? "interface"
+                    : t.IsEnum ? "enum"
+                    : t.IsValueType ? "struct"
+                    : (t.IsAbstract && t.IsSealed) ? "static class"
+                    : "class";
+
+                hits.Add($"{kind} {name}  [{asm.GetName().Name}]");
+            }
+        }
+
+        return Json(new
+        {
+            ok = true,
+            pattern,
+            scannedTypes = scanned,
+            matched = hits.Count,
+            truncated = hits.Count >= cap,
+            types = hits,
+            assembliesThatFailedToLoad = failed,
+        });
+    }
+
+    private static readonly List<Assembly> ClientAssemblyCache = [];
+    private static readonly HashSet<string> ClientAssemblyFailures = [];
+
+    /// <summary>
+    /// 加载客户端目录下的所有托管程序集（带缓存）。
+    /// 加载不了的记下来 —— 排查时「哪些没加载」本身就是线索。
+    /// </summary>
+    private static List<Assembly> LoadAllClientAssemblies(List<string> failures)
+    {
+        if (ClientAssemblyCache.Count == 0)
+        {
+            foreach (var dll in Directory.GetFiles(ClientDirectory, "*.dll"))
+            {
+                var name = Path.GetFileNameWithoutExtension(dll);
+                try
+                {
+                    var asm = Load(name) ?? Assembly.Load(File.ReadAllBytes(dll));
+
+                    // 只收托管程序集：原生 DLL 会在 Load 时抛 BadImageFormatException
+                    ClientAssemblyCache.Add(asm);
+                }
+                catch (Exception)
+                {
+                    ClientAssemblyFailures.Add(name);
+                }
+            }
+        }
+
+        failures.AddRange(ClientAssemblyFailures);
+        return ClientAssemblyCache;
+    }
+
     private static string Json(object o) => System.Text.Json.JsonSerializer.Serialize(o, new JsonSerializerOptions
     {
         WriteIndented = true,

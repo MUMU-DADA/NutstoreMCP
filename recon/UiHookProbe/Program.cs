@@ -35,6 +35,8 @@ internal static class Program
         failures += Check("L3 写入守卫：非空目录必拒（核心数据安全）", Guard_NonEmptyDirectoryAlwaysRefused);
         failures += Check("L3 写入守卫：嵌套同步根必拒", Guard_NestedUnderExistingBindingRefused);
         failures += Check("L3 写入守卫：全部满足也只预演", Guard_FullySatisfiedStillDryRun);
+        failures += Check("L3 写入守卫：缺沙箱状态 fail-closed", Guard_MissingSyncStateRefused);
+        failures += Check("L3 写入守卫：已绑定的沙箱拒绝重绑", Guard_AlreadySyncedSandboxRefused);
 
         Console.WriteLine();
         Console.WriteLine(failures == 0 ? "══ 全部通过 ══" : $"══ {failures} 项失败 ══");
@@ -234,8 +236,10 @@ internal static class Program
         bool isDir = true,
         bool isEmpty = true,
         bool bound = false,
-        string[]? existing = null)
-        => new(unlock, confirm, dryRun, path, exists, isDir, isEmpty, bound, existing ?? []);
+        string[]? existing = null,
+        long sandboxId = 42,
+        string? syncState = "NotSynced")
+        => new(unlock, confirm, dryRun, path, exists, isDir, isEmpty, bound, existing ?? [], sandboxId, syncState);
 
     private static (bool, string) Guard_DefaultsRefuseEverything()
     {
@@ -298,6 +302,31 @@ internal static class Program
         var ok = dry.Allowed && !dry.WouldWrite && wet.Allowed && wet.WouldWrite;
         return (ok, $"dryRun: allowed={dry.Allowed} wouldWrite={dry.WouldWrite}; "
                     + $"非dryRun: allowed={wet.Allowed} wouldWrite={wet.WouldWrite}");
+    }
+
+    private static (bool, string) Guard_MissingSyncStateRefused()
+    {
+        // 留空不等于「无所谓」：没提供状态就等于没证明它尚未绑定，必须拒绝
+        var v = NutstoreMcp.Plugin.L3.WriteGuards.Evaluate(Req(syncState: null));
+        var sandboxZero = NutstoreMcp.Plugin.L3.WriteGuards.Evaluate(Req(sandboxId: 0));
+
+        var ok = !v.Allowed && !sandboxZero.Allowed;
+        return (ok, $"缺状态: allowed={v.Allowed}; 缺沙箱ID: allowed={sandboxZero.Allowed}");
+    }
+
+    private static (bool, string) Guard_AlreadySyncedSandboxRefused()
+    {
+        var bad = new List<string>();
+        foreach (var state in new[] { "SyncedToDisk", "SyncPlaceholder" })
+        {
+            var v = NutstoreMcp.Plugin.L3.WriteGuards.Evaluate(Req(syncState: state));
+            if (v.Allowed)
+            {
+                bad.Add(state);
+            }
+        }
+
+        return (bad.Count == 0, bad.Count == 0 ? "SyncedToDisk / SyncPlaceholder 均被拒" : string.Join(",", bad));
     }
 
     /// <summary>从 Json.Obj 产出的 JSON 里抠出 type 字段。</summary>

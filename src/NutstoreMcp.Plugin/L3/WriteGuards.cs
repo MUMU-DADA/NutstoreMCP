@@ -39,7 +39,9 @@ public static class WriteGuards
         bool LocalPathIsDirectory,
         bool LocalPathIsEmpty,
         bool PathAlreadyBound,
-        IReadOnlyList<string> ExistingBindingPaths);
+        IReadOnlyList<string> ExistingBindingPaths,
+        long SandboxId = 0,
+        string? SandboxSyncState = null);
 
     public static Verdict Evaluate(Request r)
     {
@@ -113,8 +115,36 @@ public static class WriteGuards
             }
         }
 
+        // ── 4. 必须绑定一个**已存在于云端**的沙箱 ──
+        //
+        // 绑定已存在的沙箱是纯本地操作（云端内容会被下载下来）。
+        // 「新建云端文件夹」是远程写操作，属于另一件事，不在本工具范围内。
+        if (r.SandboxId <= 0)
+        {
+            refusals.Add(
+                "没有指定要绑定的云端沙箱（sandboxId 必须为正数）。"
+                + "本操作只把**已存在**的云端文件夹绑到本地，不在云端新建任何东西 —— "
+                + "先用 nutstore_sync_folders 拿到未绑定的沙箱及其 ID。");
+        }
+
+        // fail-closed：状态必须被**明确证明**是 NotSynced。
+        // 留空不等于「无所谓」—— 没提供就等于没证明，拒绝。
+        if (string.IsNullOrWhiteSpace(r.SandboxSyncState))
+        {
+            refusals.Add(
+                "没有提供沙箱的同步状态，无法确认它尚未绑定。"
+                + "必须显式传 sandboxSyncState=NotSynced（值来自 nutstore_sync_folders）。");
+        }
+        else if (!string.Equals(r.SandboxSyncState, "NotSynced", StringComparison.OrdinalIgnoreCase))
+        {
+            refusals.Add(
+                $"沙箱状态是 {r.SandboxSyncState}，不是 NotSynced。"
+                + "只允许绑定尚未同步的沙箱 —— 已绑定的再绑一次没有意义，"
+                + "而且可能触发意料之外的重定位。");
+        }
+
         notes.Add("本操作只创建绑定，不删除、不移动任何文件或目录。");
-        notes.Add("执行前请自行确认: 云端沙箱是空的，或你清楚其中的内容。");
+        notes.Add("绑定后客户端会把云端内容下载到该目录 —— 所以它必须是空的。");
 
         // 只有全部放行、且不是预演时才真的写
         return new Verdict(
