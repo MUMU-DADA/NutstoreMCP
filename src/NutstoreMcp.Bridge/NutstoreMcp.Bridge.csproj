@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net48</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>NutstoreMcp.Bridge</AssemblyName>
+    <RootNamespace>NutstoreMcp.Bridge</RootNamespace>
+    <PlatformTarget>x64</PlatformTarget>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+    <DebugType>none</DebugType>
+
+    <!-- 桥在 Main 之前被 CLR 加载。那一刻任何依赖解析失败都会让**客户端起不来**，
+         所以这里刻意零依赖：只用 mscorlib + System，配置用最简单的手写解析。
+         唯一的外部引用是 Contract —— 它是跨 AppDomain 类型转换的必需品。 -->
+    <AutoGenerateBindingRedirects>false</AutoGenerateBindingRedirects>
+    <GenerateSupportedRuntime>false</GenerateSupportedRuntime>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\NutstoreMcp.Plugin.Contract\NutstoreMcp.Plugin.Contract.csproj" />
+  </ItemGroup>
+
+</Project>

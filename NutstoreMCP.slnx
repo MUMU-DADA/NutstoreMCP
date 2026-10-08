@@ -6,7 +6,9 @@
 
   <!-- 进程内：.NET Framework 4.8，跑在坚果云客户端里 -->
   <Folder Name="/src/插件/">
+    <Project Path="src/NutstoreMcp.Plugin.Contract/NutstoreMcp.Plugin.Contract.csproj" />
     <Project Path="src/NutstoreMcp.Plugin/NutstoreMcp.Plugin.csproj" />
+    <Project Path="src/NutstoreMcp.Bridge/NutstoreMcp.Bridge.csproj" />
     <Project Path="src/NutstoreMcp.Host/NutstoreMcp.Host.csproj" />
   </Folder>
 
