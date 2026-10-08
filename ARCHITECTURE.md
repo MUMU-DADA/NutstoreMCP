@@ -363,10 +363,51 @@ Explorer 里的云图标、按需下载全部失效。`UnregisterSyncRootsOfAcco
 与 `MirrorSyncRootCreateInfo` 的区分，正对应 GUI 里那句
 「修改后的同步文件夹会变为'不占用电脑空间'状态」—— 即占位符模式 vs 镜像模式。
 
+### ⛔ 不要由 AI 重启客户端 —— 沙箱会弄坏它
+
+这条不是谨慎，是技术上的必须。
+
+客户端有 gRPC 命名管道服务 `\\.\pipe\BadgeGrpcNamedPipe.BadgeToNutstoreV3`
+（资源管理器集成用）。而 DSH 沙箱**拒绝从工作区启动的进程访问命名管道**
+（`UnauthorizedAccessException`，所有 SQOS 级别都拒 —— 见 §8 第 4 条实测）。
+
+所以如果由 agent 用 `Start-Process` 重启 `NutstoreClient.exe`，
+**它的命名管道服务会起不来**，资源管理器的云图标、右键菜单等集成会坏掉。
+表现是「客户端在跑但集成不见了」—— 比不重启糟得多。
+
+**重启必须由用户自己做**（从开始菜单或资源管理器启动，脱离沙箱）。
+
+### 还缺的一块：怎么拿到活的队列实例
+
+已经明确要调什么：
+
+```csharp
+queue.DiscardDuplicateAndEnqueue(new DownstreamBindSandboxCommand(info))
+```
+
+但 `DownstreamCommandQueue` 要从活着的 `NSSandboxContext.DownstreamQ` 拿，
+而 `NSSandboxContext` 需要构造参数 `NSSandbox`。**用类型名猜没有结果**：
+
+- 没有 `ContextManager` / `SandboxContextFactory` / `RuntimeContext` 之类的注册表类
+- `NutstoreClient.Context` 命名空间下只有命令、检查点、队列本身，没有持有者
+- 按 `Application` 搜被 Office interop 类型淹没，没定位到客户端自己的 App 类
+
+**结论：这个问题应该在有默认域的时候用运行时探查解决，而不是继续猜类型名。**
+客户端是 Prism 应用，活对象大概率挂在它的 DI 容器里 ——
+拿到 `Application.Current` 后沿 `Container` 找，比对着 16,878 个类型名猜靠谱得多。
+
+这也是为什么下一轮应该先重启、再做 API 探查：**运行时的对象图是答案，
+类型名列表不是。**
+
 ### 危险信号
 
 `NSSandboxContext.WipeDataWhenLostAccess` —— 客户端有「失去访问权时清空本地数据」
 的行为。任何 L3 操作都要注意别触发它。
+
+同一类还有 `MissingLocalFolderPolicy`（本地文件夹缺失时的策略）——
+这两个属性都说明客户端在异常路径上有**主动删除本地数据**的设计。
+L3 不该去改这些开关。
+
 
 **关键点**：`SandboxId`/`SandboxMagic` 来自服务端，**不能自造**。
 这也意味着不能凭空「创建」一个沙箱 —— 只能绑定已存在的。
