@@ -11,7 +11,7 @@
 
 ```powershell
 .\verify.ps1
-```r
+```
 
 一次跑完：编译 + 主测试套件（dotnet test）+ WPF 探针。
 
@@ -47,7 +47,7 @@ WebDAV 建出来的目录，客户端认得但不会同步到本地（会被标�
 
 ```powershell
 .\verify.ps1
-```r
+```
 
 一次跑完：编译 + 主测试套件（dotnet test）+ WPF 探针。
 
@@ -124,7 +124,7 @@ dotnet run --project src/NutstoreMcp -- --doctor
 
 ```powershell
 .\verify.ps1
-```r
+```
 
 一次跑完：编译 + 主测试套件（dotnet test）+ WPF 探针。
 
@@ -164,7 +164,7 @@ L2 的工具在**没有 WebDAV 凭据**时也能用 —— 它读的是本地库
 
 ```powershell
 .\verify.ps1
-```r
+```
 
 一次跑完：编译 + 主测试套件（dotnet test）+ WPF 探针。
 
@@ -201,7 +201,7 @@ L2 的工具在**没有 WebDAV 凭据**时也能用 —— 它读的是本地库
 
 ```powershell
 .\verify.ps1
-```r
+```
 
 一次跑完：编译 + 主测试套件（dotnet test）+ WPF 探针。
 
@@ -224,7 +224,7 @@ L2 的工具在**没有 WebDAV 凭据**时也能用 —— 它读的是本地库
 
 ```powershell
 .\verify.ps1
-```r
+```
 
 一次跑完：编译 + 主测试套件（dotnet test）+ WPF 探针。
 
@@ -274,7 +274,7 @@ dotnet run --project src/NutstoreMcp.Host -- --selftest         # 插件自检�
 
 ```powershell
 .\verify.ps1
-```r
+```
 
 一次跑完：编译 + 主测试套件（dotnet test）+ WPF 探针。
 
