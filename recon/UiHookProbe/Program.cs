@@ -1,0 +1,185 @@
+using System.Windows;
+using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
+using System.Windows.Media;
+using NutstoreMcp.UiHook;
+
+namespace UiHookProbe;
+
+/// <summary>
+/// 遍历逻辑的本地验证。
+///
+/// <para>
+/// 存在的理由：控件树遍历已经出过两次 bug —— 一次是「逻辑树优先」把整棵视觉
+/// 子树剪掉（设置界面因此完全看不见），一次是局部去重导致成环指数展开
+/// （多文件夹的窗口炸出 141k 节点、38k 个重复 MenuItem）。
+/// 两次都只能在真客户端里暴露，一次重启换一个 bug 的代价太高。
+/// </para>
+/// <para>
+/// 这个探针造出那两类结构，离线验证遍历结果。
+/// </para>
+/// </summary>
+internal static class Program
+{
+    [STAThread]
+    private static int Main()
+    {
+        var failures = 0;
+
+        failures += Check("模板生成的控件能被走到（视觉树不能被子树剪掉）", TestTemplateContent);
+        failures += Check("逻辑与视觉并集不产生重复", TestLogicalVisualOverlap);
+        failures += Check("Popup 内容能被走到且不成环", TestPopupNoCycle);
+        failures += Check("共享子树只访问一次（全局去重）", TestLogicalVisualOverlapVisitedOnce);
+
+        Console.WriteLine();
+        Console.WriteLine(failures == 0 ? "══ 全部通过 ══" : $"══ {failures} 项失败 ══");
+        return failures == 0 ? 0 : 1;
+    }
+
+    private static int Check(string name, Func<(bool Ok, string Detail)> test)
+    {
+        try
+        {
+            var (ok, detail) = test();
+            Console.WriteLine($"  {(ok ? "✅" : "❌")} {name}");
+            if (!string.IsNullOrEmpty(detail))
+            {
+                Console.WriteLine($"       {detail}");
+            }
+
+            return ok ? 0 : 1;
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"  ❌ {name}");
+            Console.WriteLine($"       {ex.GetType().Name}: {ex.Message}");
+            return 1;
+        }
+    }
+
+    /// <summary>
+    /// 模板生成的控件只在视觉树里。
+    /// 老的「逻辑子非空就用逻辑子」实现会把它们整棵剪掉。
+    /// </summary>
+    private static (bool, string) TestTemplateContent()
+    {
+        // 一个带模板的 Button：它的 Border/ContentPresenter 都是模板产物，
+        // 只在视觉树里，逻辑子只有它的 Content
+        var button = new Button { Content = "点我", Width = 100, Height = 30 };
+        var root = new StackPanel();
+        root.Children.Add(button);
+
+        // 强迫模板展开
+        root.Measure(new Size(400, 400));
+        root.Arrange(new Rect(0, 0, 400, 400));
+        root.UpdateLayout();
+
+        var nodes = UiHook.WalkTree(root, 20, out _);
+        var types = nodes.Select(ExtractType).ToList();
+
+        var hasTemplatePart = types.Any(t => t is "ContentPresenter" or "Border" or "ButtonChrome");
+        return (hasTemplatePart,
+            hasTemplatePart
+                ? $"走到 {nodes.Count} 个节点，含模板产物"
+                : $"只走到 {nodes.Count} 个节点：{string.Join(", ", types.Distinct())}");
+    }
+
+    /// <summary>逻辑树和视觉树是同一批对象时必须去重。</summary>
+    private static (bool, string) TestLogicalVisualOverlap()
+    {
+        // Grid 的子元素在逻辑树和视觉树上都会出现 —— 并集后必须只算一次
+        var grid = new Grid();
+        for (var i = 0; i < 3; i++)
+        {
+            grid.Children.Add(new TextBlock { Text = $"item{i}" });
+        }
+
+        var nodes = UiHook.WalkTree(grid, 20, out _);
+        var textBlocks = nodes.Count(n => ExtractType(n) == "TextBlock");
+
+        return (textBlocks == 3, $"TextBlock 出现 {textBlocks} 次（应为 3）");
+    }
+
+    /// <summary>Popup 内容挂在独立的 PopupRoot 上，且菜单结构容易成环。</summary>
+    private static (bool, string) TestPopupNoCycle()
+    {
+        var menu = new ContextMenu();
+        for (var i = 0; i < 3; i++)
+        {
+            var item = new MenuItem { Header = $"menu{i}" };
+            // 子菜单：MenuItem 内嵌子项，这是真客户端里 MenuItem 爆炸的结构来源
+            item.Items.Add(new MenuItem { Header = $"sub{i}" });
+            menu.Items.Add(item);
+        }
+
+        var root = new StackPanel();
+        root.Children.Add(new TextBlock { Text = "host" });
+        root.ContextMenu = menu;
+
+        menu.PlacementTarget = root;
+
+        // 必须**保持打开**再遍历：关掉后 WPF 会断开 Popup，那就测不到真实路径了
+        menu.IsOpen = true;
+        try
+        {
+            root.Measure(new Size(400, 400));
+            root.Arrange(new Rect(0, 0, 400, 400));
+            root.UpdateLayout();
+
+            var nodes = UiHook.WalkTree(root, 25, out var truncated);
+            var menuItems = nodes.Count(n => ExtractType(n) == "MenuItem");
+
+            // 关键断言：不能指数爆炸。真客户端里 12 项列表炸出 38k 个 MenuItem。
+            var ok = menuItems is > 0 and < 100;
+            return (ok, $"MenuItem {menuItems} 个（应 >0 且远小于 100），总节点 {nodes.Count}，截断={truncated}");
+        }
+        finally
+        {
+            menu.IsOpen = false;
+        }
+    }
+
+    /// <summary>
+    /// 同一对象经**不同父节点**可达时只应产出一次。
+    ///
+    /// <para>
+    /// 真凶是 ContentControl：它的 Content 既在逻辑树上（ContentControl → Content），
+    /// 也在视觉树上（ContentControl → ContentPresenter → Content）。
+    /// 两个父不同，所以「每个节点各自去重」根本挡不住 —— 真客户端里就是这样
+    /// 从 721 个节点炸成 141k 的。
+    /// </para>
+    /// </summary>
+    private static (bool, string) TestLogicalVisualOverlapVisitedOnce()
+    {
+        var content = new TextBlock { Text = "唯一的内容" };
+        var host = new ContentControl { Content = content };
+
+        var root = new StackPanel();
+        root.Children.Add(host);
+
+        root.Measure(new Size(400, 400));
+        root.Arrange(new Rect(0, 0, 400, 400));
+        root.UpdateLayout();
+
+        var nodes = UiHook.WalkTree(root, 25, out _);
+        // net48 没有 Contains(string, StringComparison)
+        var contentCount = nodes.Count(n => n.IndexOf("唯一的内容", StringComparison.Ordinal) >= 0);
+
+        return (contentCount == 1, $"内容块在树里出现 {contentCount} 次（应为 1）");
+    }
+
+    /// <summary>从 Json.Obj 产出的 JSON 里抠出 type 字段。</summary>
+    private static string ExtractType(string json)
+    {
+        const string key = "\"type\":\"";
+        var i = json.IndexOf(key, StringComparison.Ordinal);
+        if (i < 0)
+        {
+            return string.Empty;
+        }
+
+        var start = i + key.Length;
+        var end = json.IndexOf('"', start);
+        return end < 0 ? string.Empty : json.Substring(start, end - start);
+    }
+}

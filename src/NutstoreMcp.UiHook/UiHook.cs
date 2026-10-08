@@ -107,11 +107,12 @@ public sealed class UiHook : MarshalByRefObject, IUiHook
 
             var nodes = new List<string>();
             var truncated = false;
+            var visited = new HashSet<DependencyObject>(RefComparer.Instance);
             var budget = 12000; // 防止控件树过大把响应撑爆
 
             if (window.Content is DependencyObject content)
             {
-                Walk(content, 0, Clamp(maxDepth, 1, 40), nodes, ref budget, ref truncated);
+                Walk(content, 0, Clamp(maxDepth, 1, 40), nodes, ref budget, ref truncated, visited);
             }
 
             return Json.Obj(
@@ -143,10 +144,11 @@ public sealed class UiHook : MarshalByRefObject, IUiHook
 
             var hits = new List<string>();
             var cap = Clamp(limit, 1, 200);
+            var visited = new HashSet<DependencyObject>(RefComparer.Instance);
 
             if (window.Content is DependencyObject content)
             {
-                Search(content, 0, elementNameOrType ?? string.Empty, hits, cap);
+                Search(content, 0, elementNameOrType ?? string.Empty, hits, cap, visited);
             }
 
             return Json.Obj(
@@ -201,10 +203,11 @@ public sealed class UiHook : MarshalByRefObject, IUiHook
 
                 // 导出模式给足预算：这里的目的是「一次拿全」，
                 // 慢一点无所谓，漏掉东西才要命。
+                var visited = new HashSet<DependencyObject>(RefComparer.Instance);
                 var budget = 200000;
                 if (w.Content is DependencyObject content)
                 {
-                    Walk(content, 0, 60, nodes, ref budget, ref truncated);
+                    Walk(content, 0, 60, nodes, ref budget, ref truncated, visited);
                 }
 
                 totalNodes += nodes.Count;
@@ -232,6 +235,25 @@ public sealed class UiHook : MarshalByRefObject, IUiHook
     }
 
     // ── 内部实现 ──
+
+    /// <summary>
+    /// 遍历核心，独立出来是为了能**脱离客户端**测试。
+    ///
+    /// <para>
+    /// 遍历这块已经出过两次 bug（逻辑树剪掉视觉子树、局部去重导致成环指数展开），
+    /// 而两次都只能在真客户端里才暴露 —— 一次重启才换一个 bug 的教训太贵了。
+    /// 把核心逻辑暴露出来，就可以在本地造树验证。
+    /// </para>
+    /// </summary>
+    public static List<string> WalkTree(DependencyObject root, int maxDepth, out bool truncated)
+    {
+        var nodes = new List<string>();
+        truncated = false;
+        var budget = 12000;
+        var visited = new HashSet<DependencyObject>(RefComparer.Instance);
+        Walk(root, 0, maxDepth, nodes, ref budget, ref truncated, visited);
+        return nodes;
+    }
 
     // net48 没有 Math.Clamp 和 String.Contains(string, StringComparison) ——
     // 那些是 .NET Core / netstandard2.1 的 API，这里自己补两个。
@@ -266,8 +288,17 @@ public sealed class UiHook : MarshalByRefObject, IUiHook
                ?? matched[0];
     }
 
-    private static void Walk(DependencyObject node, int depth, int maxDepth, List<string> output, ref int budget, ref bool truncated)
+    private static void Walk(DependencyObject node, int depth, int maxDepth, List<string> output, ref int budget, ref bool truncated, HashSet<DependencyObject> visited)
     {
+        // 全局访问集：逻辑树与视觉树并集 + Popup.Child 之后，同一个对象会经由
+        // 多条路径到达，菜单的弹出子菜单甚至会指回菜单结构本身。
+        // 用局部去重会指数级重复展开 —— 实测 多文件夹的窗口炸出 141k 节点，
+        // 其中 38k 是 MenuItem 的重复。
+        if (!visited.Add(node))
+        {
+            return;
+        }
+
         if (budget <= 0)
         {
             truncated = true;
@@ -296,13 +327,19 @@ public sealed class UiHook : MarshalByRefObject, IUiHook
 
         foreach (var child in Children(node))
         {
-            Walk(child, depth + 1, maxDepth, output, ref budget, ref truncated);
+            Walk(child, depth + 1, maxDepth, output, ref budget, ref truncated, visited);
         }
     }
 
-    private static void Search(DependencyObject node, int depth, string query, List<string> hits, int cap)
+    private static void Search(DependencyObject node, int depth, string query, List<string> hits, int cap, HashSet<DependencyObject> visited)
     {
-        if (hits.Count >= cap || depth > 40)
+        // 同 Walk：必须全局去重，否则重复展开既慢又会让 hits 被同一批控件塞满
+        if (!visited.Add(node))
+        {
+            return;
+        }
+
+        if (hits.Count >= cap || depth > 60)
         {
             return;
         }
@@ -333,7 +370,7 @@ public sealed class UiHook : MarshalByRefObject, IUiHook
 
         foreach (var child in Children(node))
         {
-            Search(child, depth + 1, query, hits, cap);
+            Search(child, depth + 1, query, hits, cap, visited);
         }
     }
 
@@ -360,6 +397,21 @@ public sealed class UiHook : MarshalByRefObject, IUiHook
         if (node is System.Windows.Controls.Primitives.Popup popup && popup.Child is not null && seen.Add(popup.Child))
         {
             result.Add(popup.Child);
+        }
+
+        // ContextMenu / ToolTip 挂在**属性**上，既不在逻辑树也不在视觉树里 ——
+        // 不显式接上，右键菜单和气泡的内容遍历永远看不到（实测 MenuItem 数为 0）。
+        if (node is FrameworkElement fe)
+        {
+            if (fe.ContextMenu is not null && seen.Add(fe.ContextMenu))
+            {
+                result.Add(fe.ContextMenu);
+            }
+
+            if (fe.ToolTip is DependencyObject tip && seen.Add(tip))
+            {
+                result.Add(tip);
+            }
         }
 
         // C# 不允许在 try-catch 里 yield，所以先收集再产出
