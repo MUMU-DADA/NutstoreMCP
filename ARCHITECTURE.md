@@ -314,11 +314,59 @@ class DownstreamBindSandboxCommand {
 4. `SetSyncLocation(localPath)` → `new DownstreamBindSandboxCommand(info)` 投递
 
 **尚未查清的最后一环 → 命令怎么投递。** `DownstreamBindSandboxCommand` 继承自
-`NutstoreClient.Commands.DownstreamCommand`，而投递目标大概率是
-`NSSandboxContext.DownstreamQ`（`DownstreamCommandQueue` 类型）。
-`DownstreamCommandQueue` 的入队/执行方法还没测绘 —— 这是接通写入路径前
-唯一还缺的信息块。**在查清它之前不要写投递代码**：投错队列或绕过节流
-可能让客户端在非预期时机执行绑定。
+`NutstoreClient.Commands.DownstreamCommand`，投递目标是 `NSSandboxContext.DownstreamQ`。
+队列本身已经测绘清楚：
+
+```csharp
+class NutstoreClient.Context.DownstreamCommandQueue {
+    Void Enqueue(DownstreamCommand command)
+    Void DiscardDuplicateAndEnqueue(DownstreamBindSandboxCommand command)   // ← 专用入口
+    Boolean HasPendingBindCommand(SandboxInfo newSandboxInfo)              // ← 去重检查
+    Void AddToQueueHead / AddToPendingQueueHead / Clear / Dequeue
+}
+```
+
+**客户端为这个场景提供了专用方法** `DiscardDuplicateAndEnqueue` —— 它自己做去重。
+不该用裸的 `Enqueue` 绕过它。
+
+仍然缺的是**怎么拿到活的队列实例**（`NSSandboxContext` 的实例属性，
+而构造它需要一个 `NSSandbox`）。这需要客户端运行时，也就是默认域。
+
+### 数据流的结论：绑定不需要 L2 帮忙
+
+L2 的 `all_sandbox_list` 解析**刻意不导出 `magic`**（「内部标识不外泄」），
+而绑定需要 `SandboxId` + `SandboxMagic`。
+
+所以绑定应该在**默认域里直接从客户端取完整的 `SandboxInfo`** ——
+那里 id 和 magic 都是现成的，不需要 L2 中转，也不需要我拼装身份。
+这反而更安全：身份完全来自客户端自己的对象。
+
+### ⛔ OS 层：这些方法绝对不能暴露
+
+`Nutstore.StorageProvider.CloudSyncRootService` 是 Windows 云文件 API（CfApi）的集成层：
+
+```csharp
+static Task RegisterAsync(SyncRootCreateInfoBase rootInfo)
+static Void UnregisterSyncRoot(SyncRootCreateInfoBase rootInfo)
+static Void UnregisterSyncRootsOfAccount(String account)
+static Void UnregisterAllNutstoreSyncRoots()          // ⛔⛔ 全账号所有同步根
+static Void DisconnectSyncRoot(Int64 connectionKey)
+static Boolean DisableSyncRootOnDemandPopulation(String syncRootPath)
+```
+
+`UnregisterAllNutstoreSyncRoots()` 会把**所有**同步根从系统注销 ——
+Explorer 里的云图标、按需下载全部失效。`UnregisterSyncRootsOfAccount` 同级别危险。
+
+这两个连同 `RemoveSandbox` / `MigrateSandboxPath` 一起列入**永不暴露**清单。
+
+顺带：`SandboxSyncRootCreateInfo(String syncRootPath, Int64 sndId, String account)`
+与 `MirrorSyncRootCreateInfo` 的区分，正对应 GUI 里那句
+「修改后的同步文件夹会变为'不占用电脑空间'状态」—— 即占位符模式 vs 镜像模式。
+
+### 危险信号
+
+`NSSandboxContext.WipeDataWhenLostAccess` —— 客户端有「失去访问权时清空本地数据」
+的行为。任何 L3 操作都要注意别触发它。
 
 **关键点**：`SandboxId`/`SandboxMagic` 来自服务端，**不能自造**。
 这也意味着不能凭空「创建」一个沙箱 —— 只能绑定已存在的。
