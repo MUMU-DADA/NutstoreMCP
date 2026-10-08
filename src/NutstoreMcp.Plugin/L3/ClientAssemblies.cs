@@ -34,17 +34,39 @@ internal static class ClientAssemblies
                 return _clientDir;
             }
 
-            // 按版本号倒序找最新的 bin-* 目录
+            // 按**版本号**倒序，不是按字符串。
+            //
+            // 字符串倒序是错的：'bin-7.2.9' > 'bin-7.2.13'（因为 '9' > '1'），
+            // 于是客户端从 7.2.9 升级到 7.2.13 之后，这里会选中**旧**目录 ——
+            // 表现是插件突然读不到正确的客户端程序集，而报错完全指不到原因。
             var root = @"C:\Program Files\Nutstore";
             var best = Directory.Exists(root)
                 ? Directory.GetDirectories(root, "bin-*")
-                    .OrderByDescending(d => d, StringComparer.OrdinalIgnoreCase)
-                    .FirstOrDefault(d => File.Exists(Path.Combine(d, "NutstoreClient.exe")))
+                    .Where(d => File.Exists(Path.Combine(d, "NutstoreClient.exe")))
+                    .OrderByDescending(VersionKey)
+                    .FirstOrDefault()
                 : null;
 
             _clientDir = best ?? string.Empty;
             return _clientDir;
         }
+    }
+
+    /// <summary>
+    /// 从 <c>bin-7.2.12</c> 这样的目录名里取出可比较的版本号。
+    /// 解析不出来时返回最小版本，让它在排序里沉底 —— 宁可漏选也不要选错。
+    /// </summary>
+    private static Version VersionKey(string directory)
+    {
+        var name = Path.GetFileName(directory);
+        var match = System.Text.RegularExpressions.Regex.Match(name, @"(\d+(?:\.\d+)+)");
+
+        if (!match.Success)
+        {
+            return new Version(0, 0);
+        }
+
+        return Version.TryParse(match.Groups[1].Value, out var v) ? v : new Version(0, 0);
     }
 
     public static bool Available => ClientDirectory.Length > 0;

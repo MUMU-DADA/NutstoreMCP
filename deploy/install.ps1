@@ -31,6 +31,9 @@ param(
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot -Parent
 
+# 客户端目录发现逻辑由 _client.ps1 提供（按版本号取最新，见那里的说明）
+. (Join-Path $PSScriptRoot '_client.ps1')
+
 $AssemblyName = 'NutstoreMcp.Bridge'
 $TypeName = 'NutstoreMcp.Bridge.BridgeDomainManager'
 $BridgeFiles = @('NutstoreMcp.Bridge.dll', 'NutstoreMcp.Plugin.Contract.dll')
@@ -107,12 +110,10 @@ if (-not (Test-Admin) -and -not $WhatIfPreference -and -not $Elevated) {
     exit 0
 }
 
-# ── 找客户端目录 ──
+# ── 找客户端目录（按版本号取最新，见 _client.ps1 里的说明）──
 if (-not $ClientDir) {
-    $exe = Get-ChildItem 'C:\Program Files\Nutstore' -Recurse -Filter 'NutstoreClient.exe' -ErrorAction SilentlyContinue |
-        Select-Object -First 1
-    if (-not $exe) { throw '找不到 NutstoreClient.exe' }
-    $ClientDir = $exe.DirectoryName
+    $ClientDir = Find-NutstoreClientDir
+    if (-not $ClientDir) { throw '找不到 NutstoreClient.exe' }
 }
 
 $configPath = Join-Path $ClientDir 'NutstoreClient.exe.config'

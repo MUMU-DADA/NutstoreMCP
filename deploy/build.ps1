@@ -24,6 +24,9 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+
+# 客户端目录发现逻辑由 _client.ps1 提供（按版本号取最新，见那里的说明）
+. (Join-Path $PSScriptRoot '_client.ps1')
 $root = Split-Path $PSScriptRoot -Parent
 
 function Step($text) { Write-Host "  $text" -ForegroundColor Cyan }
@@ -149,11 +152,10 @@ Write-Host '改 NutstoreMcp.UiHook 仍然需要重启客户端。' -ForegroundCo
 #   · 插件目录 —— 插件（子域）绑定的是它
 # 两边不一致时，跨域调用会报「未在接口找到方法 X」的 RemotingException，
 # 而那个错误从现象上完全看不出是版本不一致导致的。
-$clientExe = Get-ChildItem 'C:\Program Files\Nutstore' -Recurse -Filter 'NutstoreClient.exe' -ErrorAction SilentlyContinue |
-    Select-Object -First 1
+$clientDir = Find-NutstoreClientDir
 
-if ($clientExe) {
-    $installedContract = Join-Path $clientExe.DirectoryName 'NutstoreMcp.Plugin.Contract.dll'
+if ($clientDir) {
+    $installedContract = Join-Path $clientDir 'NutstoreMcp.Plugin.Contract.dll'
     $stagedContract = Join-Path $Target 'NutstoreMcp.Plugin.Contract.dll'
 
     if (Test-Path $installedContract) {
