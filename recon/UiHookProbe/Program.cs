@@ -31,6 +31,10 @@ internal static class Program
         failures += Check("Popup 内容能被走到且不成环", TestPopupNoCycle);
         failures += Check("共享子树只访问一次（全局去重）", TestLogicalVisualOverlapVisitedOnce);
         failures += Check("从 Window 走能到达窗口模板（adorner 层在这里）", TestWindowTemplateReachable);
+        failures += Check("L3 写入守卫：默认全拒", Guard_DefaultsRefuseEverything);
+        failures += Check("L3 写入守卫：非空目录必拒（核心数据安全）", Guard_NonEmptyDirectoryAlwaysRefused);
+        failures += Check("L3 写入守卫：嵌套同步根必拒", Guard_NestedUnderExistingBindingRefused);
+        failures += Check("L3 写入守卫：全部满足也只预演", Guard_FullySatisfiedStillDryRun);
 
         Console.WriteLine();
         Console.WriteLine(failures == 0 ? "══ 全部通过 ══" : $"══ {failures} 项失败 ══");
@@ -214,6 +218,86 @@ internal static class Program
         {
             win.Close();
         }
+    }
+
+    // ── L3 写入守卫 ──
+    //
+    // 这些是这一层最该被测的东西：L3 唯一可能丢数据的地方就是「把本地目录绑到云端沙箱」，
+    // 而放行判断是纯逻辑，可以离线穷举，不必拿用户的数据当验证环境。
+
+    private static NutstoreMcp.Plugin.L3.WriteGuards.Request Req(
+        bool unlock = true,
+        bool confirm = true,
+        bool dryRun = false,
+        string path = @"C:\tmp\newsync",
+        bool exists = true,
+        bool isDir = true,
+        bool isEmpty = true,
+        bool bound = false,
+        string[]? existing = null)
+        => new(unlock, confirm, dryRun, path, exists, isDir, isEmpty, bound, existing ?? []);
+
+    private static (bool, string) Guard_DefaultsRefuseEverything()
+    {
+        var v = NutstoreMcp.Plugin.L3.WriteGuards.Evaluate(
+            Req(unlock: false, confirm: false, dryRun: true));
+
+        var ok = !v.Allowed && !v.WouldWrite && v.Refusals.Count >= 2;
+        return (ok, $"拒绝 {v.Refusals.Count} 条，wouldWrite={v.WouldWrite}");
+    }
+
+    private static (bool, string) Guard_NonEmptyDirectoryAlwaysRefused()
+    {
+        // 即使解锁、确认、非预演，非空目录也必须被拒 —— 这是本层存在的全部理由
+        var v = NutstoreMcp.Plugin.L3.WriteGuards.Evaluate(
+            Req(unlock: true, confirm: true, dryRun: false, isEmpty: false));
+
+        var mentionsNonEmpty = v.Refusals.Any(r => r.IndexOf("非空", StringComparison.Ordinal) >= 0);
+        return (!v.Allowed && !v.WouldWrite && mentionsNonEmpty,
+            $"allowed={v.Allowed} wouldWrite={v.WouldWrite} 提到非空={mentionsNonEmpty}");
+    }
+
+    private static (bool, string) Guard_NestedUnderExistingBindingRefused()
+    {
+        var cases = new (string Candidate, string Existing, bool ShouldRefuse)[]
+        {
+            (@"C:\Users\me\sync", @"C:\Users\me\sync", true),             // 完全相同
+            (@"C:\Users\me\sync\sub", @"C:\Users\me\sync", true),         // 现有根的子目录
+            (@"C:\Users\me", @"C:\Users\me\sync", true),                  // 现有根的父目录
+            (@"C:\Users\me\sync", @"C:\Users\me\sync2", false),           // 前缀相同但不是祖孙
+            (@"C:\Users\me\other", @"C:\Users\me\sync", false),           // 无关
+            (@"C:\Users\me\SYNC\sub", @"c:\users\me\sync", true),         // 大小写不同仍算重叠
+        };
+
+        var bad = new List<string>();
+        foreach (var c in cases)
+        {
+            var v = NutstoreMcp.Plugin.L3.WriteGuards.Evaluate(
+                Req(path: c.Candidate, existing: [c.Existing]));
+
+            var refused = !v.Allowed;
+            if (refused != c.ShouldRefuse)
+            {
+                bad.Add($"{c.Candidate} vs {c.Existing}: 期望{(c.ShouldRefuse ? "拒绝" : "放行")}，实际{(refused ? "拒绝" : "放行")}");
+            }
+        }
+
+        return (bad.Count == 0, bad.Count == 0 ? $"{cases.Length} 个边界用例全对" : string.Join("; ", bad));
+    }
+
+    private static (bool, string) Guard_FullySatisfiedStillDryRun()
+    {
+        // 全部条件满足 + dryRun=true → 允许，但不写
+        var dry = NutstoreMcp.Plugin.L3.WriteGuards.Evaluate(
+            Req(unlock: true, confirm: true, dryRun: true));
+
+        // 全部满足 + dryRun=false → 允许且会写（真正的执行还要看通道是否可用）
+        var wet = NutstoreMcp.Plugin.L3.WriteGuards.Evaluate(
+            Req(unlock: true, confirm: true, dryRun: false));
+
+        var ok = dry.Allowed && !dry.WouldWrite && wet.Allowed && wet.WouldWrite;
+        return (ok, $"dryRun: allowed={dry.Allowed} wouldWrite={dry.WouldWrite}; "
+                    + $"非dryRun: allowed={wet.Allowed} wouldWrite={wet.WouldWrite}");
     }
 
     /// <summary>从 Json.Obj 产出的 JSON 里抠出 type 字段。</summary>

@@ -106,9 +106,11 @@ internal static class SandboxApi
             {
                 result = read.Invoke(null, [copyPath]);
             }
-            catch (TargetInvocationException ex)
+            catch (Exception ex)
             {
-                return Fail($"调用客户端 DAO 失败: {ex.InnerException?.GetType().Name}: {ex.InnerException?.Message}");
+                // 把整条内部异常链摊开：TypeInitializationException 只是外壳，
+                // 真正的原因（缺文件？缺路径？解密失败？）在最里面那层。
+                return Fail("调用客户端 DAO 失败", DescribeChain(ex));
             }
 
             if (result is not System.Collections.IEnumerable list)
@@ -194,4 +196,37 @@ internal static class SandboxApi
         ok = false,
         reason,
     }, Json);
+
+    private static string Fail(string reason, object detail) => JsonSerializer.Serialize(new
+    {
+        ok = false,
+        reason,
+        detail,
+    }, Json);
+
+    /// <summary>把异常链摊平成可读的结构 —— 外层异常几乎从不说明真实原因。</summary>
+    public static List<object> DescribeChain(Exception ex)
+    {
+        var chain = new List<object>();
+        var depth = 0;
+
+        while (ex is not null && depth++ < 8)
+        {
+            chain.Add(new
+            {
+                level = depth,
+                type = ex.GetType().FullName,
+                message = ex.Message,
+                // 第一帧堆栈往往就指向真正的失败点
+                topFrame = (ex.StackTrace ?? string.Empty)
+                    .Split('\n')
+                    .Select(s => s.Trim())
+                    .FirstOrDefault(s => s.Length > 0),
+            });
+
+            ex = ex.InnerException!;
+        }
+
+        return chain;
+    }
 }

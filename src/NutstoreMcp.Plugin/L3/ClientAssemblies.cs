@@ -262,6 +262,61 @@ internal static class ClientAssemblies
         return t.Name;
     }
 
+    /// <summary>
+    /// 报告子域里那些「客户端静态初始化会用到」的基础路径。
+    ///
+    /// <para>
+    /// 客户端代码（<c>NutstoreLib.Utils.DirectoryUtils</c>）的静态构造会拿
+    /// 用户 AppData 之类的路径，然后在子域里得到空串，最后炸在
+    /// <c>Path.NormalizeLongPath("")</c>。但空的是哪一个，从异常里看不出来 ——
+    /// 所以把候选逐个列出来对比。
+    /// </para>
+    /// </summary>
+    public static string ProbeEnvironment()
+    {
+        object Grab(string name, Func<object?> f)
+        {
+            try
+            {
+                var v = f();
+                return new { name, ok = true, value = v?.ToString() ?? "(null)" };
+            }
+            catch (Exception ex)
+            {
+                return new { name, ok = false, value = $"{ex.GetType().Name}: {ex.Message}" };
+            }
+        }
+
+        var probes = new[]
+        {
+            Grab("Environment.ApplicationData", () => Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData)),
+            Grab("Environment.LocalApplicationData", () => Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData)),
+            Grab("Environment.UserProfile", () => Environment.GetFolderPath(Environment.SpecialFolder.UserProfile)),
+            Grab("Environment.CommonApplicationData", () => Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData)),
+            Grab("Environment.MyDocuments", () => Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments)),
+            Grab("Environment.Desktop", () => Environment.GetFolderPath(Environment.SpecialFolder.Desktop)),
+            Grab("Environment.CurrentDirectory", () => Environment.CurrentDirectory),
+            Grab("Environment.UserName", () => Environment.UserName),
+            Grab("AppDomain.BaseDirectory", () => AppDomain.CurrentDomain.BaseDirectory),
+            Grab("AppDomain.RelativeSearchPath", () => AppDomain.CurrentDomain.RelativeSearchPath),
+            Grab("AppDomain.FriendlyName", () => AppDomain.CurrentDomain.FriendlyName),
+            Grab("AppDomain.ConfigurationFile", () => AppDomain.CurrentDomain.SetupInformation.ConfigurationFile),
+            Grab("Assembly.GetEntryAssembly", () => Assembly.GetEntryAssembly()?.Location),
+            Grab("Assembly.GetExecutingAssembly", () => Assembly.GetExecutingAssembly().Location),
+            Grab("Env.NUTSTORE_HOME", () => Environment.GetEnvironmentVariable("NUTSTORE_HOME")),
+            Grab("Env.NUTSTORE_INSTALL_DIR", () => Environment.GetEnvironmentVariable("NUTSTORE_INSTALL_DIR")),
+            Grab("Env.APPDATA", () => Environment.GetEnvironmentVariable("APPDATA")),
+            Grab("Env.USERPROFILE", () => Environment.GetEnvironmentVariable("USERPROFILE")),
+        };
+
+        return Json(new
+        {
+            domain = AppDomain.CurrentDomain.FriendlyName,
+            isDefaultDomain = AppDomain.CurrentDomain.IsDefaultAppDomain(),
+            probes,
+        });
+    }
+
     private static string Json(object o) => System.Text.Json.JsonSerializer.Serialize(o, new JsonSerializerOptions
     {
         WriteIndented = true,

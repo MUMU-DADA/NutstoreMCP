@@ -24,6 +24,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\NutstoreMcp.UiHook\NutstoreMcp.UiHook.csproj" />
+    <ProjectReference Include="..\..\src\NutstoreMcp.Plugin\NutstoreMcp.Plugin.csproj" />
   </ItemGroup>
 
 </Project>

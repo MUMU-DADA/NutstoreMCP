@@ -29,6 +29,129 @@ public sealed class PluginTools
     private const string UiUnavailable =
         "{\"available\": false, \"reason\": \"UI 钩子未接入（桥没能在客户端默认域里加载 NutstoreMcp.UiHook.dll）\"}";
 
+    [McpServerTool(Name = "nutstore_l3_create_sync_folder", ReadOnly = false, Destructive = false, Idempotent = true, OpenWorld = false)]
+    [Description("【默认只预演】把本地空目录绑定为坚果云同步文件夹。这是 L3 唯一可能丢数据的操作，因此放行条件极严：需要环境变量 NUTSTORE_L3_WRITE=1、confirm=true、dryRun=false，且本地目录必须为空、不与现有同步根重叠。任何一条不满足都拒绝执行。**当前执行通道未接通**，即使在满足全部条件时也只返回判定结果。")]
+    public static string L3CreateSyncFolder(
+        [Description("要绑定的本地目录（必须已存在且为空）")] string localPath,
+        [Description("必须显式传 true 才可能执行")] bool confirm = false,
+        [Description("默认 true（只预演不执行）")] bool dryRun = true,
+        [Description("云端沙箱名；留空则用目录名")] string? sandboxName = null,
+        [Description("现有同步根路径列表，分号分隔。不传则因无法确认重叠而拒绝")] string? existingBindings = null)
+    {
+        try
+        {
+            var unlock = !string.IsNullOrWhiteSpace(
+                Environment.GetEnvironmentVariable(L3.WriteGuards.UnlockVariable))
+                && Environment.GetEnvironmentVariable(L3.WriteGuards.UnlockVariable)!.Trim() is "1" or "true" or "TRUE";
+
+            var exists = !string.IsNullOrWhiteSpace(localPath) && Directory.Exists(localPath);
+            var isDir = exists;
+
+            var isEmpty = false;
+            var entryCount = -1;
+            var probeError = (string?)null;
+
+            if (isDir)
+            {
+                try
+                {
+                    // 只数条目，不递归、不读内容 —— 这个操作本身绝不能有副作用
+                    entryCount = Directory.EnumerateFileSystemEntries(localPath).Take(2).Count();
+                    isEmpty = entryCount == 0;
+                }
+                catch (Exception ex)
+                {
+                    probeError = $"{ex.GetType().Name}: {ex.Message}";
+                }
+            }
+
+            var bindings = string.IsNullOrWhiteSpace(existingBindings)
+                ? []
+                // net48 没有 Split(char, StringSplitOptions)，只有数组重载
+                : existingBindings!.Split([';'], StringSplitOptions.RemoveEmptyEntries)
+                    .Select(s => s.Trim())
+                    .Where(s => s.Length > 0)
+                    .ToList();
+
+            var request = new L3.WriteGuards.Request(
+                UnlockPresent: unlock,
+                Confirmed: confirm,
+                DryRun: dryRun,
+                LocalPath: localPath,
+                LocalPathExists: exists,
+                LocalPathIsDirectory: isDir,
+                LocalPathIsEmpty: isEmpty,
+                PathAlreadyBound: false,
+                ExistingBindingPaths: bindings);
+
+            var verdict = L3.WriteGuards.Evaluate(request);
+
+            var refusals = verdict.Refusals.ToList();
+
+            // 无法确认重叠时 fail-closed：宁可拒绝也不要赌
+            if (bindings.Count == 0)
+            {
+                refusals.Add(
+                    "未提供现有同步根列表，无法确认新路径是否与它们重叠。"
+                    + "请先用 nutstore_l3_sync_folders 取到后通过 existingBindings 传入。");
+            }
+
+            if (probeError is not null)
+            {
+                refusals.Add($"无法检查目录内容: {probeError}");
+            }
+
+            // 执行通道：需要默认域的客户端 DAO，当前不可用。
+            // 即使全部放行也不写 —— 明确说清楚，不假装成功。
+            const bool executionAvailable = false;
+
+            return JsonSerializer.Serialize(new
+            {
+                allowed = refusals.Count == 0,
+                wouldWrite = refusals.Count == 0 && !dryRun && executionAvailable,
+                dryRun,
+                unlockVariablePresent = unlock,
+                probe = new
+                {
+                    localPath,
+                    exists,
+                    isDirectory = isDir,
+                    isEmpty,
+                    entryCount,
+                    sandboxName = string.IsNullOrWhiteSpace(sandboxName)
+                        ? Path.GetFileName((localPath ?? string.Empty).TrimEnd('\\', '/'))
+                        : sandboxName,
+                    existingBindingCount = bindings.Count,
+                },
+                refusals,
+                notes = verdict.Notes,
+                executionAvailable,
+                executionUnavailableReason = executionAvailable
+                    ? null
+                    : "调用客户端 NSSandboxDAO.InitSandbox 需要默认域（客户端运行时环境），"
+                      + "而插件的子域里客户端的静态初始化会失败。需要重启客户端后经 UI 钩子接通。",
+            }, Indented);
+        }
+        catch (Exception ex)
+        {
+            return Error(ex);
+        }
+    }
+
+    [McpServerTool(Name = "nutstore_l3_env", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
+    [Description("报告插件子域里的基础路径（AppData、当前目录、入口程序集等）。用于诊断客户端静态初始化为什么在子域里失败。只读。")]
+    public static string L3Env()
+    {
+        try
+        {
+            return L3.ClientAssemblies.ProbeEnvironment();
+        }
+        catch (Exception ex)
+        {
+            return Error(ex);
+        }
+    }
+
     [McpServerTool(Name = "nutstore_l3_sync_folders", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
     [Description("用坚果云客户端自己的 DAO 读取所有同步文件夹绑定（沙箱 ID、云端名、本地路径、是否占位符）。数据来自客户端模型而非猜表结构，客户端升级后更不容易失准。**读的是数据库副本，真实数据库不会被打开**。")]
     public static string L3SyncFolders()
