@@ -264,6 +264,23 @@ MCP 的价值不该用「能替用户做危险操作」来体现。
 
 ### ⚠️ InitSandbox 若要做，必须满足全部条件
 
+**先看清它到底需要什么**：`InitSandbox(NSSandbox, perms)` 绑的是**已存在的云端沙箱**。
+而 `NSSandbox` 的构造是：
+
+```csharp
+public NSSandbox(long id, long magic, string localAbsPath, bool allowUncPath)
+```
+
+`id` 和 `magic` 是**服务端分配的** —— 不能自造。也就是说 GUI 里那个
+「添加同步文件夹」实际是两步：
+
+1. 在云端建一个沙箱（**远程写操作**）
+2. 拿到服务端返回的 `id`/`magic`，构造 `NSSandbox`，再 `InitSandbox` 绑到本地
+
+所以**只实现第 2 步是不完整且危险的**：拿不到合法的 id/magic，就只能靠猜，
+而这是唯一可能丢数据的路径。在搞清楚第 1 步怎么走通之前，
+写入路径不应该开始写代码。
+
 真正的数据丢失风险不在「写数据库」，而在**把本地目录和云端沙箱绑在一起之后会发生什么**：
 
 | 场景 | 后果 |
