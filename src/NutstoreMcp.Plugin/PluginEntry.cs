@@ -97,6 +97,15 @@ public static class PluginEntry
                     var raw = File.Exists(stateFile) ? File.ReadAllText(stateFile).Trim() : "true";
                     var enabled = !string.Equals(raw, "false", StringComparison.OrdinalIgnoreCase);
 
+                    if (last is null)
+                    {
+                        // 首次轮询只记录基线，**绝不触发动作**。
+                        // 少了这个分支就是死循环：插件启动 → last=null → 读到 true
+                        // 当成「变了」→ 触发重载 → 插件重启 → last 又是 null → 再触发…
+                        last = enabled;
+                        continue;
+                    }
+
                     if (last == enabled)
                     {
                         continue;
@@ -111,6 +120,11 @@ public static class PluginEntry
                     // 而重载这条路已经被验证过很多次了。
                     log($"设置界面里的开关变为 {(enabled ? "开" : "关")} —— 触发插件重载");
                     RequestReload();
+                }
+                catch (ThreadAbortException)
+                {
+                    // 子域被卸载时会中止这个线程 —— 正常的关闭路径，不是错误
+                    return;
                 }
                 catch (Exception ex)
                 {
