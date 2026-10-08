@@ -107,7 +107,7 @@ public sealed class UiHook : MarshalByRefObject, IUiHook
 
             var nodes = new List<string>();
             var truncated = false;
-            var budget = 4000; // 防止控件树过大把响应撑爆
+            var budget = 12000; // 防止控件树过大把响应撑爆
 
             if (window.Content is DependencyObject content)
             {
@@ -265,23 +265,66 @@ public sealed class UiHook : MarshalByRefObject, IUiHook
     }
 
     /// <summary>
-    /// 逻辑树优先，空的再退到视觉树。
-    /// x:Name 命名过的控件在逻辑树上更全，模板展开出来的在视觉树上。
-    /// 两边都走会重复，所以取其一。
+    /// 取子节点：逻辑树 **并上** 视觉树。
+    ///
+    /// <para>
+    /// 之前的实现是「逻辑子非空就用逻辑子，否则退到视觉子」—— 这是错的：
+    /// 只要某节点有逻辑子节点，它的**整棵视觉子树就被剪掉**了，而模板生成的
+    /// 控件、adorner、滑出面板统统只在视觉树里。设置界面就是这么被漏掉的。
+    /// </para>
+    /// <para>
+    /// 另外 <see cref="Popup"/> 的内容不在窗口的视觉树里（它挂在独立的
+    /// PopupRoot 上），必须显式取 <see cref="Popup.Child"/>，否则菜单、
+    /// 气泡、弹出面板一个都看不到。
+    /// </para>
     /// </summary>
     private static IEnumerable<DependencyObject> Children(DependencyObject node)
     {
-        List<DependencyObject> logical;
+        var seen = new HashSet<DependencyObject>(RefComparer.Instance);
+        var result = new List<DependencyObject>();
+
+        // Popup：内容在独立视觉树里，得单独接上
+        if (node is System.Windows.Controls.Primitives.Popup popup && popup.Child is not null && seen.Add(popup.Child))
+        {
+            result.Add(popup.Child);
+        }
+
+        // C# 不允许在 try-catch 里 yield，所以先收集再产出
         try
         {
-            logical = LogicalTreeHelper.GetChildren(node).Cast<object>().OfType<DependencyObject>().ToList();
+            foreach (var child in LogicalTreeHelper.GetChildren(node).Cast<object>().OfType<DependencyObject>())
+            {
+                if (seen.Add(child))
+                {
+                    result.Add(child);
+                }
+            }
         }
         catch (Exception)
         {
-            logical = [];
+            // 个别节点的逻辑子不可枚举
         }
 
-        return logical.Count > 0 ? logical : VisualChildren(node);
+        foreach (var child in VisualChildren(node))
+        {
+            if (seen.Add(child))
+            {
+                result.Add(child);
+            }
+        }
+
+        return result;
+    }
+
+    /// <summary>按引用比较 —— WPF 里有些类型重写了 Equals，用默认比较器会误判重复。</summary>
+    private sealed class RefComparer : IEqualityComparer<DependencyObject>
+    {
+        public static readonly RefComparer Instance = new();
+
+        public bool Equals(DependencyObject? a, DependencyObject? b) => ReferenceEquals(a, b);
+
+        public int GetHashCode(DependencyObject o)
+            => System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(o);
     }
 
     private static List<DependencyObject> VisualChildren(DependencyObject node)
