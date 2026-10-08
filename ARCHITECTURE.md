@@ -313,6 +313,13 @@ class DownstreamBindSandboxCommand {
 3. 选一个**空的**本地目录
 4. `SetSyncLocation(localPath)` → `new DownstreamBindSandboxCommand(info)` 投递
 
+**尚未查清的最后一环 → 命令怎么投递。** `DownstreamBindSandboxCommand` 继承自
+`NutstoreClient.Commands.DownstreamCommand`，而投递目标大概率是
+`NSSandboxContext.DownstreamQ`（`DownstreamCommandQueue` 类型）。
+`DownstreamCommandQueue` 的入队/执行方法还没测绘 —— 这是接通写入路径前
+唯一还缺的信息块。**在查清它之前不要写投递代码**：投错队列或绕过节流
+可能让客户端在非预期时机执行绑定。
+
 **关键点**：`SandboxId`/`SandboxMagic` 来自服务端，**不能自造**。
 这也意味着不能凭空「创建」一个沙箱 —— 只能绑定已存在的。
 要新建云端文件夹，那是 `NutstoreClient.Connection.NutstoreRequest+CreateDirectoryRequestEntity`
