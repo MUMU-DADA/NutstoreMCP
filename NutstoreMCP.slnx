@@ -1,0 +1,8 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/NutstoreMcp/NutstoreMcp.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/NutstoreMcp.Tests/NutstoreMcp.Tests.csproj" />
+  </Folder>
+</Solution>

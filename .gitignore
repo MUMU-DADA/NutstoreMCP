@@ -3,6 +3,10 @@ node_modules/
 dist/
 *.log
 
+# .NET 构建产物（覆盖所有工程，包括 recon 与 tests）
+[Bb]in/
+[Oo]bj/
+
 # 本地配置与凭据 —— 绝不提交
 .env
 .env.local
@@ -17,13 +21,15 @@ secrets/
 *.mitm
 *.har
 
-# recon 工具的 .NET 构建产物
-recon/**/bin/
-recon/**/obj/
-
 # 编辑器 / 系统
 .vscode/
 .idea/
 *.swp
 Thumbs.db
 desktop.ini
+
+# 测试临时目录
+.test-tmp/
+
+# 发布产物
+publish/

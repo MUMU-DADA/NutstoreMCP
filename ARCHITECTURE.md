@@ -57,7 +57,7 @@
 - `config.all_sandbox_list`：完整云端 sandbox 列表，含 `sandboxId` / `usedSpace` / `canSync` / `doNotSync` / `desc`
 - `sndconfig<hash>`：`sandbox_name` = `{"id":…,"magic":…,"localAbsPath":"C:\\…"}`
 - `sndobject<hash>`：每文件一行（`dir_path` / `file_name` / `hash` / `mtime` / `size` / `version`）
-- 用 Node 24 原生 `node:sqlite` 只读打开，**不加依赖**
+- 用 `Microsoft.Data.Sqlite` 以 `Mode=ReadOnly` 只读打开
 
 ### L3 控制面
 
@@ -86,15 +86,27 @@
 
 ## 4. 技术选型
 
-**Node 24 单文件 stdio MCP，零运行时依赖。**
+**C# / .NET 10，可发布为自包含单文件 —— 目标机器无需安装运行时。**
 
 理由：
-- 本机 Node 24 已装，`node:sqlite` 与 `fetch` 均原生可用
-- 本机**无 `uv`/`uvx`**，`python` 只有 WindowsApps 占位桩 → 现成的 PyPI 方案开箱不可用
-- 零依赖 = 无供应链面、无版本漂移
 
-接入 DSH：`@deepseek-ai/dsh-mcp-client`，`transport: stdio`，在
-`~/.dsh/profiles/web/cordis.patch.yml` 追加一条 `insert` 配置项。
+- **与宿主同栈。** 坚果云客户端是 C# / WPF / .NET Framework 4.6.2
+  （MahApps.Metro + Prism；`Microsoft.Web.WebView2.**Wpf**.dll` 只是嵌入式控件，
+  安装目录里没有任何 Electron / CEF / Chromium）。同栈的直接收益是 L3：
+  若走 UI Automation，`System.Windows.Automation` 是一等公民；
+  换别的语言要手写 `IUIAutomation` 的 COM 互操作，成本高一个数量级。
+- **部署零依赖。** `dotnet publish -r win-x64 --self-contained` 产出
+  `nutstore-mcp.exe` + `e_sqlite3.dll`（约 39 MB），目标机器不需要装 .NET。
+- 排除 Python：本机 `python` 只有 WindowsApps 占位桩、无 `uv`/`uvx`，
+  现成的 PyPI 方案开箱不可用。
+- 排除 Go：运行时与体积确实更优，但没有 UIA 绑定 —— 会把 L3 带进沟里。
+
+**注意**：不要用 `IncludeNativeLibrariesForSelfExtract` 追求「真·单文件」。
+它把原生库压进 exe 并在运行时解包到 `%TEMP%\.net`，在 `%TEMP%` 对进程不可写的
+机器上会直接启动失败（实测 `error code: 5`）。两文件形态在哪都能跑。
+
+接入 DSH：`@deepseek-ai/dsh-mcp-client`，`transport: stdio`，`command` 指向发布出的 exe，
+在 `~/.dsh/profiles/web/cordis.patch.yml` 追加一条 `insert` 配置项。
 
 ---
 
