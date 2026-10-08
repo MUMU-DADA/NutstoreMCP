@@ -88,4 +88,19 @@ public interface IUiHook
     /// </para>
     /// </summary>
     string DumpAll(string directory);
+
+    /// <summary>
+    /// 在客户端的设置页里放一个开关行。
+    ///
+    /// <para>
+    /// 幂等：先把同名的旧项摘掉再插，重复调用不会出现两行。
+    /// 开关状态变化时写进 <paramref name="stateFile"/>（内容为 true/false），
+    /// 插件靠监听这个文件来决定启停 MCP 服务 —— 跨域没法直接回调。
+    /// </para>
+    /// <para>
+    /// 这是**扩展界面**，不是 GUI 自动化：不模拟点击、不发按键，
+    /// 只是往客户端的设置列表里加一个它自己原生的控件。
+    /// </para>
+    /// </summary>
+    string AddToggle(string title, string subtitle, string stateFile, bool initialChecked);
 }

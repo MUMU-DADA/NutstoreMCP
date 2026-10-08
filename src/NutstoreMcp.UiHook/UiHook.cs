@@ -2,6 +2,8 @@ using System.Globalization;
 using System.Reflection;
 using System.Text;
 using System.Windows;
+using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
 using System.Windows.Media;
 using NutstoreMcp.Plugin.Contract;
 
@@ -277,6 +279,209 @@ public sealed class UiHook : MarshalByRefObject, IUiHook
                 ("extraSourceCount", extraCount),
                 ("totalNodes", totalNodes));
         });
+    }
+
+    /// <summary>
+    /// 往客户端的设置页里插一个开关行。
+    ///
+    /// <para>
+    /// 用的是客户端**自己的** <c>Nutstore.Client.Wpf.Controls.SettingItem</c>
+    /// （<c>Mode = CheckBox</c>），模板由客户端套 —— 所以外观和原生设置项一致，
+    /// 不是贴上去的异物。
+    /// </para>
+    /// <para>
+    /// 状态变化写文件而不是回调插件：钩子在默认域、插件在子域，跨域回调要维护
+    /// 反向代理和生命周期，而一个布尔值不值得。文件还能天然持久化。
+    /// </para>
+    /// </summary>
+    public string AddToggle(string title, string subtitle, string stateFile, bool initialChecked)
+    {
+        return OnUiThread(() =>
+        {
+            var app = Application.Current;
+            if (app is null)
+            {
+                return Json.Obj(("ok", false), ("reason", "Application.Current 为空"));
+            }
+
+            // 1. 找设置项容器：装着多个 SettingItem 的 StackPanel
+            var host = FindSettingsPanel(app);
+            if (host is null)
+            {
+                return Json.Obj(("ok", false), ("reason", "没找到设置项容器 —— 设置面板可能没打开"));
+            }
+
+            // 2. 拿到客户端自己的 SettingItem 类型
+            var itemType = FindLoadedType("Nutstore.Client.Wpf.Controls.SettingItem");
+            var modeType = FindLoadedType("Nutstore.Client.Wpf.Controls.SettingItemMode");
+            if (itemType is null || modeType is null)
+            {
+                return Json.Obj(("ok", false), ("reason", "客户端程序集里找不到 SettingItem / SettingItemMode"));
+            }
+
+            // 3. 幂等：先摘掉同名的旧项
+            var titleProperty = itemType.GetProperty("Title");
+            var removed = 0;
+
+            foreach (var old in host.Children.OfType<FrameworkElement>().ToList())
+            {
+                if (old.GetType() != itemType)
+                {
+                    continue;
+                }
+
+                if (string.Equals(titleProperty?.GetValue(old) as string, title, StringComparison.Ordinal))
+                {
+                    host.Children.Remove(old);
+                    removed++;
+                }
+            }
+
+            // 4. 造一个新的
+            var item = Activator.CreateInstance(itemType);
+            if (item is not DependencyObject dep)
+            {
+                return Json.Obj(("ok", false), ("reason", "SettingItem 实例化失败"));
+            }
+
+            SetProperty(item, "Mode", Enum.Parse(modeType, "CheckBox"));
+            SetProperty(item, "Title", title);
+            SetProperty(item, "Subtitle", subtitle);
+            SetProperty(item, "IsChecked", initialChecked);
+
+            // 初始状态先落一次盘，插件启动时才有得读
+            TryWriteState(stateFile, initialChecked);
+
+            // 5. 订阅变化 → 写文件
+            var isCheckedDp = (DependencyProperty?)itemType
+                .GetField("IsCheckedProperty", BindingFlags.Public | BindingFlags.Static)
+                ?.GetValue(null);
+
+            if (isCheckedDp is not null)
+            {
+                var descriptor = System.ComponentModel.DependencyPropertyDescriptor
+                    .FromProperty(isCheckedDp, itemType);
+                if (descriptor is not null)
+                {
+                    descriptor.AddValueChanged(item, (_, _) =>
+                    {
+                        try
+                        {
+                            TryWriteState(stateFile, (bool)itemType.GetProperty("IsChecked")!.GetValue(item)!);
+                        }
+                        catch (Exception)
+                        {
+                            // 写盘失败不影响界面
+                        }
+                    });
+                }
+            }
+
+            host.Children.Add((UIElement)item);
+
+            return Json.Obj(
+                ("ok", true),
+                ("removed", removed),
+                ("hostType", host.GetType().Name),
+                ("childCount", host.Children.Count),
+                ("stateFile", stateFile));
+        });
+    }
+
+    private static Panel? FindSettingsPanel(Application app)
+    {
+        foreach (Window w in app.Windows)
+        {
+            var found = FindSettingsPanelIn(w, 0);
+            if (found is not null)
+            {
+                return found;
+            }
+        }
+
+        return null;
+    }
+
+    private static Panel? FindSettingsPanelIn(DependencyObject node, int depth)
+    {
+        if (depth > 60)
+        {
+            return null;
+        }
+
+        // 设置项容器 = 直接装着多个 SettingItem 的 Panel
+        if (node is Panel panel)
+        {
+            var settingItems = panel.Children.OfType<DependencyObject>()
+                .Count(c => c.GetType().Name == "SettingItem");
+
+            if (settingItems >= 3)
+            {
+                return panel;
+            }
+        }
+
+        foreach (var child in Children(node))
+        {
+            var found = FindSettingsPanelIn(child, depth + 1);
+            if (found is not null)
+            {
+                return found;
+            }
+        }
+
+        return null;
+    }
+
+    private static Type? FindLoadedType(string fullName)
+    {
+        foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
+        {
+            try
+            {
+                var t = asm.GetType(fullName, throwOnError: false);
+                if (t is not null)
+                {
+                    return t;
+                }
+            }
+            catch (Exception)
+            {
+                // 个别程序集反射会抛，跳过
+            }
+        }
+
+        return null;
+    }
+
+    private static void SetProperty(object target, string name, object? value)
+    {
+        try
+        {
+            target.GetType().GetProperty(name)?.SetValue(target, value);
+        }
+        catch (Exception)
+        {
+            // 属性不存在或类型不匹配 —— 不影响其它属性
+        }
+    }
+
+    private static void TryWriteState(string path, bool value)
+    {
+        try
+        {
+            var dir = Path.GetDirectoryName(path);
+            if (!string.IsNullOrEmpty(dir))
+            {
+                Directory.CreateDirectory(dir);
+            }
+
+            File.WriteAllText(path, value ? "true" : "false", Encoding.UTF8);
+        }
+        catch (Exception)
+        {
+            // 界面操作不该因为写盘失败而失败
+        }
     }
 
     // ── 内部实现 ──

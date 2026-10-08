@@ -72,6 +72,90 @@ public static class PluginEntry
     }
 
     /// <summary>
+    /// 开启状态文件的监听：设置界面里的开关改的就是这个文件。
+    ///
+    /// <para>
+    /// 用轮询而不是 FileSystemWatcher：Watcher 在网络盘、快速连续写入、
+    /// 缓冲区溢出时会静默丢事件，而这里一次漏读就意味着开关失效且无人察觉。
+    /// 两秒一次的读文件成本可以忽略。
+    /// </para>
+    /// </summary>
+    public static void WatchEnabledState(string stateFile, Action<string> log)
+    {
+        _stateFile = stateFile;
+
+        var worker = new Thread(() =>
+        {
+            bool? last = null;
+
+            while (true)
+            {
+                try
+                {
+                    Thread.Sleep(2000);
+
+                    var raw = File.Exists(stateFile) ? File.ReadAllText(stateFile).Trim() : "true";
+                    var enabled = !string.Equals(raw, "false", StringComparison.OrdinalIgnoreCase);
+
+                    if (last == enabled)
+                    {
+                        continue;
+                    }
+
+                    last = enabled;
+
+                    // 不在这里自己启停 HTTP 服务，而是**触发一次插件热重载**：
+                    // 重载会让插件按新的状态文件重新决定要不要起服务。
+                    // 这样开关和应用状态永远一致 —— 自己管理启停要处理
+                    // HttpListener 解绑、SDK 流对断开、host 生命周期一堆事，
+                    // 而重载这条路已经被验证过很多次了。
+                    log($"设置界面里的开关变为 {(enabled ? "开" : "关")} —— 触发插件重载");
+                    RequestReload();
+                }
+                catch (Exception ex)
+                {
+                    log($"监听开关状态出错: {ex.GetType().Name}: {ex.Message}");
+                }
+            }
+        })
+        {
+            IsBackground = true,
+            Name = "NutstoreMcp.EnabledWatcher",
+        };
+
+        worker.Start();
+    }
+
+    /// <summary>设置界面开关的状态文件路径。</summary>
+    public static string StateFilePath => string.IsNullOrEmpty(_stateFile)
+        ? Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "NutstoreMcp", "enabled.state")
+        : _stateFile;
+
+    /// <summary>读开关状态。文件不存在时视为开启（首次安装即用）。</summary>
+    public static bool ReadEnabledState()
+    {
+        try
+        {
+            var path = StateFilePath;
+            if (!File.Exists(path))
+            {
+                return true;
+            }
+
+            return !string.Equals(File.ReadAllText(path).Trim(), "false", StringComparison.OrdinalIgnoreCase);
+        }
+        catch (Exception)
+        {
+            // 读不到就当开着 —— 宁可多跑也不要让用户以为开关坏了
+            return true;
+        }
+    }
+
+    private static string _stateFile = string.Empty;
+
+    /// <summary>
     /// 请求热重载：写一个触发文件，桥看到后会卸载子域并重新加载插件。
     ///
     /// <para>
@@ -127,6 +211,17 @@ public static class PluginEntry
                 {
                     _log.Info("配置里 enabled=false，不启动");
                     LastError = "配置里 enabled=false";
+                    return;
+                }
+
+                // 设置界面里的开关优先于配置文件 —— 那才是用户看得到的那个开关。
+                // 监听器无论如何都要起来：开关关着的时候它负责在用户打开时触发重载。
+                WatchEnabledState(StateFilePath, msg => _log?.Info(msg));
+
+                if (!ReadEnabledState())
+                {
+                    _log.Info("设置界面里的开关是关闭的 —— 不启动 MCP 服务");
+                    LastError = "设置界面里的开关为关闭";
                     return;
                 }
 

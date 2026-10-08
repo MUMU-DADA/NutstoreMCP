@@ -152,6 +152,30 @@ public sealed class PluginTools
         }
     }
 
+    [McpServerTool(Name = "nutstore_ui_install_toggle", ReadOnly = false, Destructive = false, Idempotent = true, OpenWorld = false)]
+    [Description("在客户端的设置页里放一个 MCP 开关（用客户端自己的 SettingItem 控件，外观与原生设置项一致）。幂等，重复调用不会出现两行。需要设置面板处于打开状态。")]
+    public static string InstallToggle()
+    {
+        var ui = PluginEntry.Ui;
+        if (ui is null)
+        {
+            return UiUnavailable;
+        }
+
+        try
+        {
+            return ui.AddToggle(
+                "MCP 服务器",
+                "允许 AI 助手读取坚果云的同步状态。关闭后停止监听，重启客户端或切换开关可恢复。",
+                PluginEntry.StateFilePath,
+                PluginEntry.ReadEnabledState());
+        }
+        catch (Exception ex)
+        {
+            return Error(ex);
+        }
+    }
+
     [McpServerTool(Name = "nutstore_ui_dump", ReadOnly = false, Destructive = false, Idempotent = true, OpenWorld = false)]
     [Description("把客户端所有窗口的完整控件树导出到一个文件，返回文件路径。写文件，不改客户端状态。用于离线分析界面结构，避免反复重启客户端。")]
     public static string UiDump(
