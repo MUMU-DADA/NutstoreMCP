@@ -1,0 +1,13 @@
+# 统一用 LF 存进仓库。JavaScript 项目在 Windows 上出现 CRLF 会让
+# 每行末尾多一个不可见字符，diff 和某些工具都会受干扰。
+* text=auto eol=lf
+
+# Windows 上本来就需要 CRLF 的文件
+*.cmd text eol=crlf
+*.bat text eol=crlf
+
+# 二进制，不做行尾转换
+*.png binary
+*.jpg binary
+*.gif binary
+*.ico binary

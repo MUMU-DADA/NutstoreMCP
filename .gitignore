@@ -1,0 +1,29 @@
+# 依赖与构建产物
+node_modules/
+dist/
+*.log
+
+# 本地配置与凭据 —— 绝不提交
+.env
+.env.local
+config.local.json
+credentials.json
+secrets/
+
+# 默认下载目录（运行时产物）
+.downloads/
+
+# 抓包产物属敏感数据（见 ARCHITECTURE.md 红线 4）
+*.mitm
+*.har
+
+# recon 工具的 .NET 构建产物
+recon/**/bin/
+recon/**/obj/
+
+# 编辑器 / 系统
+.vscode/
+.idea/
+*.swp
+Thumbs.db
+desktop.ini

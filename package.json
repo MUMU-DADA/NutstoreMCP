@@ -1,0 +1,32 @@
+{
+  "name": "nutstore-mcp",
+  "version": "0.1.0",
+  "description": "坚果云本地 MCP —— L1 WebDAV 文件面 + L2 本地只读数据面",
+  "license": "MIT",
+  "type": "module",
+  "private": true,
+  "engines": {
+    "node": ">=22.5.0"
+  },
+  "bin": {
+    "nutstore-mcp": "src/server.mjs"
+  },
+  "scripts": {
+    "start": "node src/server.mjs",
+    "doctor": "node src/server.mjs --doctor",
+    "test": "node --test \"test/**/*.test.mjs\"",
+    "test:watch": "node --test --watch \"test/**/*.test.mjs\""
+  },
+  "files": [
+    "src",
+    "ARCHITECTURE.md",
+    "README.md",
+    "LICENSE"
+  ],
+  "keywords": [
+    "mcp",
+    "nutstore",
+    "jianguoyun",
+    "webdav"
+  ]
+}
