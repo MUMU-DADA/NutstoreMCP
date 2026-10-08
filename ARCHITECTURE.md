@@ -221,7 +221,103 @@ L3 的核心目标仍然要靠抓包复刻私有 API 或 UIA。
 
 ---
 
-## 10. 风险登记
+## 10. L3 控制面：API 已测绘，写入路径**刻意未启用**
+
+### 已测绘的写入 API
+
+客户端自己的 DAO（`NutstoreClient.DAO.NSSandboxDAO`，在 `NutstoreClient.Legacy.dll`）：
+
+```
+static List<NSSandbox> ReadAllSandboxesFromDb(String nutstoreDbPath)    只读
+static List<NSSandbox> ReadAllSandboxes()                               只读（需客户端运行时）
+static Int64           GetSandboxObjectsCount(NSSandbox sandbox)        只读
+
+static Void InitSandbox(NSSandbox, List<CapsOnPathBean>)                ⚠️ 创建同步绑定
+static Void RemoveSandbox(NSSandbox)                                    ⛔ 解绑，可能连带删除本地
+static Void MigrateSandboxPath(NSSandbox, String newHome)               ⛔ 移动同步目录
+static Void MigrateSandboxObjectTableToUnicodeNoCaseCollation(NSSandbox) ⚠️ 重建对象表
+```
+
+模型 `NutstoreClient.Common.NSSandbox`（注意在 `NutstoreClient.Legacy.dll` 里，
+但命名空间不是 `NutstoreClient.DAO`）：
+
+```
+Int64  ID           沙箱 ID（服务端分配，不可自造）
+Int64  Magic
+String LocalAbsPath 本地同步路径
+String Name         云端文件夹名
+Boolean IsPlaceholder
+SandboxIdentifier Identifier
+String ToJson() / static NSSandbox FromJson(String)
+```
+
+### ⛔ 三个坚决不实现的方法
+
+`RemoveSandbox` / `MigrateSandboxPath` / `MigrateSandboxObjectTableToUnicodeNoCaseCollation`
+**不在 MCP 里暴露，也不打算暴露**。理由不是技术难度，是后果：
+
+- `RemoveSandbox` 之后本地目录会怎样，取决于客户端的实现细节 —— 而那是**用户的文件**
+- `MigrateSandboxPath` 会移动同步根，中途失败可能留下两处半成品
+- 这两个操作在客户端 GUI 里都有明确的二次确认和警告文案，说明厂商自己认为它们危险
+
+MCP 的价值不该用「能替用户做危险操作」来体现。
+
+### ⚠️ InitSandbox 若要做，必须满足全部条件
+
+真正的数据丢失风险不在「写数据库」，而在**把本地目录和云端沙箱绑在一起之后会发生什么**：
+
+| 场景 | 后果 |
+|---|---|
+| 本地目录非空 + 云端沙箱非空 | 双向合并，**冲突/覆盖** |
+| 本地目录是已有同步根的子目录 | 嵌套同步，行为未定义 |
+| 本地目录指向别的软件的数据目录 | 那些文件会被上传到云 |
+
+所以设计上要求**全部**满足才放行：
+
+1. `NUTSTORE_L3_WRITE=1` 环境变量 —— **默认没有，即默认完全不可写**
+2. 调用方显式传 `confirm: true`
+3. `dryRun` 默认 `true` —— 不传就只返回「会发生什么」
+4. 本地目录存在、是目录、**且为空**（非空一律拒绝，不做「我帮你判断安不安全」）
+5. 该路径未被任何现有沙箱占用
+6. 不删除任何东西；全程只调 `InitSandbox`
+
+第 4 条刻意保守：**非空本地目录一律拒绝**。判断「这些文件和云端冲不冲突」需要比对两边全量元数据，
+判断错了代价是用户的数据 —— 宁可让用户手动建一个空目录，也不要赌。
+
+### 为什么写入路径现在跑不了（记录以免重复踩）
+
+`ReadAllSandboxesFromDb` 在**插件的子 AppDomain** 里调用会抛：
+
+```
+TypeInitializationException: 「NutstoreClient.Common.SignedInUsers」的类型初始值设定项引发异常
+```
+
+客户端自己的静态初始化依赖它运行时环境（一批 `Active*Dir` 路径来自
+`SignedInUsers.Instance`，而它的静态构造在进程外起不来 —— 与之前
+protobuf 描述符 NRE 是同一类问题：**混淆后的静态初始化只在客户端默认域里成立**）。
+
+结论：**任何调用客户端 DAO 的代码都必须跑在默认域**，也就是只能经 `IUiHook`。
+而钩子改动要重启客户端。这条路已经验证过一次（`Reflect` 在子域可用，
+但那只走反射不触发静态构造 —— 一旦真的 `Invoke` 就炸）。
+
+### 已在插件里落地且安全的部分
+
+| 构件 | 说明 |
+|---|---|
+| `L3/ClientAssemblies.cs` | 在插件子域加载客户端程序集 + `Reflect` 探查签名。**只反射，不执行** —— 不会触发那些静态构造 |
+| `L3/SandboxApi.cs` | 走 DAO 读同步配置。**先复制数据库（含 `-wal`/`-shm`）再读副本**，真库全程不被本进程打开。当前受上述限制调用失败，但复制逻辑和副本清理是正确且必要的 |
+| `nutstore_client_reflect` | 上面那套的 MCP 工具，用来在不确定 API 形状时先看清楚 |
+
+### 下一步（需要用户在场）
+
+1. 重启客户端让钩子更新
+2. 在 `IUiHook` 加一个**只读**的 `InvokeClientApi(typeName, methodName, argsJson)`，
+   在默认域里调 `ReadAllSandboxesFromDb` —— 读路径可安全落地
+3. 写入路径再单独设计、单独评审、单独开关
+
+---
+
+## 11. 风险登记
 
 | 风险 | 影响 | 缓解 |
 |---|---|---|
@@ -230,3 +326,8 @@ L3 的核心目标仍然要靠抓包复刻私有 API 或 UIA。
 | 同步根凭据被 AI 读取 | 严重 | 白名单 + 只读默认 |
 | 抓包触及账号凭据 | 严重 | 抓包产物不落盘共享、用完即删 |
 | WebDAV 配额耗尽 | 功能不可用 | 限流器 + 禁止递归扫描 |
+| L3 绑定非空本地目录 → 冲突覆盖 | **严重（用户数据）** | 非空一律拒绝 + 默认 dryRun + 默认无写权限 |
+| L3 解绑/迁移同步根 | **严重（用户数据）** | **不实现、不暴露** |
+| 插件子域崩溃波及客户端同步 | 中 | AppDomain 隔离；插件所有入口包异常；失败即静默停用 |
+| 客户端升级致目录变化 | 功能不可用 | 探测最新 `bin-*`；失败报错不静默 |
+| 契约 DLL 两处不一致 | 难排查的 RemotingException | `build.ps1` 比对 SHA256 并红字提示重装 |

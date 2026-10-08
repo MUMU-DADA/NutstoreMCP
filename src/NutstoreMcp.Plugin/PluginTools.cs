@@ -29,6 +29,37 @@ public sealed class PluginTools
     private const string UiUnavailable =
         "{\"available\": false, \"reason\": \"UI 钩子未接入（桥没能在客户端默认域里加载 NutstoreMcp.UiHook.dll）\"}";
 
+    [McpServerTool(Name = "nutstore_l3_sync_folders", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
+    [Description("用坚果云客户端自己的 DAO 读取所有同步文件夹绑定（沙箱 ID、云端名、本地路径、是否占位符）。数据来自客户端模型而非猜表结构，客户端升级后更不容易失准。**读的是数据库副本，真实数据库不会被打开**。")]
+    public static string L3SyncFolders()
+    {
+        try
+        {
+            return L3.SandboxApi.ReadSyncFolders();
+        }
+        catch (Exception ex)
+        {
+            return Error(ex);
+        }
+    }
+
+    [McpServerTool(Name = "nutstore_client_reflect", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
+    [Description("反射探查坚果云客户端某个类型的构造函数/方法/属性签名（区分 static/instance、带参数类型）。用于在不确定 API 形状时先看清楚再调用。只读，不执行任何客户端代码。")]
+    public static string ClientReflect(
+        [Description("完整类型名，例如 NutstoreClient.DAO.NSSandboxDAO")] string typeName,
+        [Description("成员名子串过滤，留空返回全部")] string? filter = null,
+        [Description("每类成员最多返回多少个，默认 60")] int limit = 60)
+    {
+        try
+        {
+            return L3.ClientAssemblies.Reflect(typeName, filter ?? string.Empty, limit);
+        }
+        catch (Exception ex)
+        {
+            return Error(ex);
+        }
+    }
+
     [McpServerTool(Name = "nutstore_plugin_status", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
     [Description("插件自身的运行状态：版本、监听端口、宿主进程、日志位置、UI 钩子是否就绪。用于确认插件已被客户端加载。")]
     public static string Status()
