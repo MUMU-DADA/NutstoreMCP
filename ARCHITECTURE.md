@@ -414,10 +414,7 @@ L3 不该去改这些开关。
 要新建云端文件夹，那是 `NutstoreClient.Connection.NutstoreRequest+CreateDirectoryRequestEntity`
 （远程写，本项目的开发期红线）。
 
-**危险信号**：`NSSandboxContext.WipeDataWhenLostAccess` —— 客户端有
-「失去访问权时清空本地数据」的行为。任何 L3 操作都要注意别触发它。
-
-### 写入守卫已验证的用例（`L3/WriteGuards.cs`，探针 11 项全绿）
+### 写入守卫已验证的用例（`L3/WriteGuards.cs`，探针 13 项全绿）
 
 | 用例 | 结果 |
 |---|---|
