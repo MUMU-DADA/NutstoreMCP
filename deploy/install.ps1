@@ -33,6 +33,7 @@ $root = Split-Path $PSScriptRoot -Parent
 
 # 客户端目录发现逻辑由 _client.ps1 提供（按版本号取最新，见那里的说明）
 . (Join-Path $PSScriptRoot '_client.ps1')
+. (Join-Path $PSScriptRoot '_config.ps1')
 
 $AssemblyName = 'NutstoreMcp.Bridge'
 $TypeName = 'NutstoreMcp.Bridge.BridgeDomainManager'
@@ -161,20 +162,34 @@ if ($Uninstall) {
     Step '还原客户端配置 …'
     if (Test-Path $backupPath) {
         if ($PSCmdlet.ShouldProcess($configPath, 'Restore from backup')) {
-            Copy-Item $backupPath $configPath -Force
+            # 还原也要原子：直接 Copy-Item 覆盖时被打断同样会留下半个文件，
+            # 而「卸载把客户端弄坏了」比「安装把它弄坏了」更难解释。
+            $restoreTmp = "$configPath.nutstore-mcp-restore"
+            try {
+                Copy-Item $backupPath $restoreTmp -Force
+
+                # 先确认备份本身是好的再换上去 —— 备份也可能已经损坏
+                $verify = New-Object System.Xml.XmlDocument
+                $verify.Load($restoreTmp)
+                if (-not $verify.configuration) { throw '备份文件没有 <configuration> 根节点，拒绝还原' }
+
+                [System.IO.File]::Replace($restoreTmp, $configPath, [NullString]::Value)
+                Ok '已从备份原子还原（并已验证备份可用）'
+            }
+            finally {
+                Remove-Item $restoreTmp -Force -ErrorAction SilentlyContinue
+            }
         }
-        Ok '已从备份还原'
     }
     else {
         # 没有备份（例如备份被删）时退而求其次：只摘掉我们加的两个元素
         if ($PSCmdlet.ShouldProcess($configPath, 'Strip appDomainManager elements')) {
-            [xml]$xml = Get-Content $configPath -Raw
-            $runtime = $xml.configuration.runtime
-            foreach ($tag in 'appDomainManagerAssembly', 'appDomainManagerType') {
-                $node = $runtime.SelectSingleNode($tag)
-                if ($node) { $runtime.RemoveChild($node) | Out-Null }
-            }
-            $xml.Save($configPath)
+            $xml = Read-ClientConfig -ConfigPath $configPath
+            $removed = Remove-AppDomainManager -Xml $xml
+
+            # ExpectedValues 传空：只做「能重新解析 + 节点数没变少」两项校验
+            Save-ClientConfigAtomically -Xml $xml -ConfigPath $configPath -ExpectedValues @{}
+            Ok "已摘除 $removed 个元素"
         }
         Warn '没有备份，已按元素摘除（其余内容未动）'
     }
@@ -216,31 +231,43 @@ else {
 }
 
 # 3. 打补丁
+#
+# 补丁逻辑在 _config.ps1 里，并且有独立测试（deploy/_config.tests.ps1）。
+# 这是仓库里唯一能弄坏客户端本身的代码，所以刻意抽出来让它可测 ——
+# 「写不进去的时候线上文件没被动过」这条比成功路径更值得证明。
 Step '写入 appDomainManager 配置 …'
-[xml]$xml = Get-Content $configPath -Raw
-$runtime = $xml.configuration.runtime
-if (-not $runtime) { throw '<runtime> 节点不存在 —— 客户端配置结构异常，放弃' }
 
-foreach ($pair in @{ appDomainManagerAssembly = $AssemblyName; appDomainManagerType = $TypeName }.GetEnumerator()) {
-    $existing = $runtime.SelectSingleNode($pair.Key)
-    if ($existing) {
-        if ($existing.value -ne $pair.Value) {
-            throw "<runtime> 里已存在 $($pair.Key) 且值不同（$($existing.value)）—— 已有别的工具在用这个扩展点，放弃以免冲突"
-        }
-        Ok "$($pair.Key) 已存在且一致"
-        continue
-    }
+$xml = Read-ClientConfig -ConfigPath $configPath
 
-    $el = $xml.CreateElement($pair.Key)
-    $el.SetAttribute('value', $pair.Value)
-    # 插到 <runtime> 最前面：部分配置节的顺序有 schema 要求，放前面最安全
-    if ($runtime.FirstChild) { $runtime.InsertBefore($el, $runtime.FirstChild) | Out-Null }
-    else { $runtime.AppendChild($el) | Out-Null }
-    Ok "已写入 $($pair.Key) = $($pair.Value)"
+try {
+    $changed = Add-AppDomainManager -Xml $xml -AssemblyName $AssemblyName -TypeName $TypeName
+}
+catch {
+    throw
 }
 
-if ($PSCmdlet.ShouldProcess($configPath, 'Save')) { $xml.Save($configPath) }
+if (-not $changed) {
+    Ok 'appDomainManager 已存在且一致，无需改动'
+}
 
+if ($PSCmdlet.ShouldProcess($configPath, 'Save')) {
+    try {
+        Save-ClientConfigAtomically -Xml $xml -ConfigPath $configPath -ExpectedValues @{
+            appDomainManagerAssembly = $AssemblyName
+            appDomainManagerType     = $TypeName
+        }
+        Ok '配置已原子替换（临时文件 → 重新解析验证 → File.Replace）'
+    }
+    catch {
+        Write-Host ''
+        Write-Host '❌ 写入客户端配置失败，**线上配置未被改动**' -ForegroundColor Red
+        Write-Host "   $($_.Exception.Message)" -ForegroundColor Red
+        Write-Host ''
+        Write-Host '   客户端可以正常启动。' -ForegroundColor Yellow
+        Write-Host "   原始备份: $backupPath" -ForegroundColor Yellow
+        throw
+    }
+}
 # 4. 检查桥的配置是否有指向
 $ini = Join-Path $env:LOCALAPPDATA 'NutstoreMcp\bridge.ini'
 Write-Host ''

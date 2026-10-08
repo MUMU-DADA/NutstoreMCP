@@ -114,6 +114,26 @@ else {
     finally { Pop-Location }
 }
 
+# ── 4. 客户端配置补丁测试 ──
+Step '部署脚本自测（客户端配置补丁）'
+Push-Location $root
+try {
+    # 这段代码是仓库里唯一能弄坏客户端本身的 —— 写坏 NutstoreClient.exe.config
+    # 意味着坚果云起不来。所以它的失败路径必须每次都被跑一遍。
+    # 测试用临时文件，不碰 Program Files。
+    $cfg = & (Join-Path $root 'deploy\_config.tests.ps1') 2>&1
+    $cfg | Where-Object { $_ -match '✅|❌' } | ForEach-Object { Write-Host "   $_" }
+
+    if ($LASTEXITCODE -eq 0) {
+        Ok '配置补丁测试全部通过'
+    }
+    else {
+        Bad "配置补丁测试失败（退出码 $LASTEXITCODE）"
+        $failures.Add('config-tests')
+    }
+}
+finally { Pop-Location }
+
 # ── 汇总 ──
 Write-Host ''
 if ($failures.Count -eq 0) {
