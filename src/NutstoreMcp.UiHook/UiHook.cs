@@ -110,10 +110,11 @@ public sealed class UiHook : MarshalByRefObject, IUiHook
             var visited = new HashSet<DependencyObject>(RefComparer.Instance);
             var budget = 12000; // 防止控件树过大把响应撑爆
 
-            if (window.Content is DependencyObject content)
-            {
-                Walk(content, 0, Clamp(maxDepth, 1, 40), nodes, ref budget, ref truncated, visited);
-            }
+            // 从 **Window 本身**开始，不是 window.Content。
+            // 窗口模板（标题栏、承载 adorner 的 AdornerDecorator）是 Content 的
+            // **兄弟节点**，只走 Content 会把它们整块漏掉 —— MahApps 的 Flyout
+            // 就挂在 AdornerLayer 上，设置面板因此一直看不见。
+            Walk(window, 0, Clamp(maxDepth, 1, 40), nodes, ref budget, ref truncated, visited);
 
             return Json.Obj(
                 ("available", true),
@@ -146,10 +147,8 @@ public sealed class UiHook : MarshalByRefObject, IUiHook
             var cap = Clamp(limit, 1, 200);
             var visited = new HashSet<DependencyObject>(RefComparer.Instance);
 
-            if (window.Content is DependencyObject content)
-            {
-                Search(content, 0, elementNameOrType ?? string.Empty, hits, cap, visited);
-            }
+            // 同上：从 Window 本身开始，否则窗口模板与 adorner 层里的东西搜不到
+            Search(window, 0, elementNameOrType ?? string.Empty, hits, cap, visited);
 
             return Json.Obj(
                 ("available", true),
@@ -186,6 +185,10 @@ public sealed class UiHook : MarshalByRefObject, IUiHook
             sb.Append("{\"dumpedAt\":").Append(Json.Quote(DateTime.Now.ToString("O")));
             sb.Append(",\"windows\":[");
 
+            // 全局共享的访问集：窗口的根视觉也在 PresentationSource 列表里，
+            // 不共享的话同一棵树会被导两遍。
+            var globalVisited = new HashSet<DependencyObject>(RefComparer.Instance);
+
             var first = true;
             var totalNodes = 0;
 
@@ -203,12 +206,11 @@ public sealed class UiHook : MarshalByRefObject, IUiHook
 
                 // 导出模式给足预算：这里的目的是「一次拿全」，
                 // 慢一点无所谓，漏掉东西才要命。
-                var visited = new HashSet<DependencyObject>(RefComparer.Instance);
                 var budget = 200000;
-                if (w.Content is DependencyObject content)
-                {
-                    Walk(content, 0, 60, nodes, ref budget, ref truncated, visited);
-                }
+
+                // 从 Window 本身开始 —— 只走 Content 会漏掉整个窗口模板，
+                // 包括承载 Flyout / adorner 的 AdornerDecorator。
+                Walk(w, 0, 60, nodes, ref budget, ref truncated, globalVisited);
 
                 totalNodes += nodes.Count;
 
@@ -222,6 +224,48 @@ public sealed class UiHook : MarshalByRefObject, IUiHook
                     ("nodes", Json.Array(nodes))));
             }
 
+            // ── 兜底：把所有活跃的 PresentationSource 也走一遍 ──
+            // Application.Windows 未必涵盖全部视觉树（独立 Popup、未注册的
+            // HwndSource 等）。窗口的根视觉已经走过了，这里靠共享访问集跳过。
+            sb.Append("],\"extraSources\":[");
+
+            var extraFirst = true;
+            var extraCount = 0;
+
+            foreach (PresentationSource src in PresentationSource.CurrentSources)
+            {
+                if (src?.RootVisual is not DependencyObject root || globalVisited.Contains(root))
+                {
+                    continue;
+                }
+
+                var nodes = new List<string>();
+                var truncated = false;
+                var budget = 200000;
+
+                Walk(root, 0, 60, nodes, ref budget, ref truncated, globalVisited);
+
+                if (nodes.Count == 0)
+                {
+                    continue;
+                }
+
+                if (!extraFirst)
+                {
+                    sb.Append(',');
+                }
+
+                extraFirst = false;
+                extraCount++;
+                totalNodes += nodes.Count;
+
+                sb.Append(Json.Obj(
+                    ("type", root.GetType().FullName),
+                    ("truncated", truncated),
+                    ("nodeCount", nodes.Count),
+                    ("nodes", Json.Array(nodes))));
+            }
+
             sb.Append("],\"totalNodes\":").Append(totalNodes).Append('}');
 
             File.WriteAllText(file, sb.ToString(), Encoding.UTF8);
@@ -230,6 +274,7 @@ public sealed class UiHook : MarshalByRefObject, IUiHook
                 ("ok", true),
                 ("file", file),
                 ("windowCount", app.Windows.Count),
+                ("extraSourceCount", extraCount),
                 ("totalNodes", totalNodes));
         });
     }

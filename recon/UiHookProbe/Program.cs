@@ -30,6 +30,7 @@ internal static class Program
         failures += Check("逻辑与视觉并集不产生重复", TestLogicalVisualOverlap);
         failures += Check("Popup 内容能被走到且不成环", TestPopupNoCycle);
         failures += Check("共享子树只访问一次（全局去重）", TestLogicalVisualOverlapVisitedOnce);
+        failures += Check("从 Window 走能到达窗口模板（adorner 层在这里）", TestWindowTemplateReachable);
 
         Console.WriteLine();
         Console.WriteLine(failures == 0 ? "══ 全部通过 ══" : $"══ {failures} 项失败 ══");
@@ -166,6 +167,53 @@ internal static class Program
         var contentCount = nodes.Count(n => n.IndexOf("唯一的内容", StringComparison.Ordinal) >= 0);
 
         return (contentCount == 1, $"内容块在树里出现 {contentCount} 次（应为 1）");
+    }
+
+    /// <summary>
+    /// 从 Window 本身遍历必须能到达**窗口模板**里的东西。
+    ///
+    /// <para>
+    /// 这是真客户端里设置面板一直看不见的真凶：遍历从 window.Content 开始，
+    /// 而窗口模板（标题栏、AdornerDecorator）是 Content 的**兄弟节点**，
+    /// 整块被跳过。MahApps 的 Flyout 就挂在 AdornerLayer 上 —— 设置面板住那儿。
+    /// </para>
+    /// </summary>
+    private static (bool, string) TestWindowTemplateReachable()
+    {
+        var win = new Window
+        {
+            Title = "probe",
+            Width = 240,
+            Height = 160,
+            // 屏幕外 + 无边框 + 不进任务栏，避免测试时闪窗
+            Left = -4000,
+            Top = -4000,
+            ShowInTaskbar = false,
+            WindowStyle = WindowStyle.None,
+            Content = new TextBlock { Text = "content" },
+        };
+
+        try
+        {
+            win.Show();
+            win.UpdateLayout();
+
+            var fromWindow = UiHook.WalkTree(win, 20, out _).Select(ExtractType).ToList();
+            var fromContent = win.Content is DependencyObject c
+                ? UiHook.WalkTree(c, 20, out _).Select(ExtractType).ToList()
+                : [];
+
+            var windowSeesAdorner = fromWindow.Contains("AdornerDecorator");
+            var contentSeesAdorner = fromContent.Contains("AdornerDecorator");
+
+            return (windowSeesAdorner && !contentSeesAdorner,
+                $"从 Window：{fromWindow.Count} 节点，AdornerDecorator={windowSeesAdorner}；"
+                + $"从 Content：{fromContent.Count} 节点，AdornerDecorator={contentSeesAdorner}");
+        }
+        finally
+        {
+            win.Close();
+        }
     }
 
     /// <summary>从 Json.Obj 产出的 JSON 里抠出 type 字段。</summary>
