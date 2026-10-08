@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <!-- 客户端程序集是 .NET Framework 4.6.2，必须用同一运行时加载。
+         .NET Framework 4.x 是 Windows 内置的，所以这个探针不需要任何安装。 -->
+    <TargetFramework>net48</TargetFramework>
+    <!-- net48 默认 C# 7.3，但 ImplicitUsings 生成的全局 using 需要 C# 10+。
+         语言版本与目标框架可以解耦，这里显式放开。 -->
+    <LangVersion>latest</LangVersion>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>LoadProbe</AssemblyName>
+    <RootNamespace>LoadProbe</RootNamespace>
+    <PlatformTarget>x64</PlatformTarget>
+  </PropertyGroup>
+</Project>

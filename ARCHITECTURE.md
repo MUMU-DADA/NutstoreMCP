@@ -152,15 +152,76 @@
 
 ---
 
-## 8. 已完成构件
+## 8. 已找到的「介入软件」通道（2026-10 实测）
+
+**结论：客户端确实有一条约 19 个方法的 gRPC 程序接口，且已实测调用成功 —— 不需要 GUI 自动化。**
+
+### 通道
+
+| 项 | 值 |
+|---|---|
+| 传输 | gRPC over 命名管道 `\\.\pipe\BadgeGrpcNamedPipe.BadgeToNutstoreV3` |
+| 服务 | `NutstoreBadge`（客户端侧实现 `NutstoreClient.NamedPipeServerImpl.GrpcBadgeNamedPipeService`） |
+| 库 | `GrpcDotNetNamedPipes`，被 ILMerge 进客户端程序集（**没有独立 DLL**） |
+
+### 怎么调（已跑通）
+
+不需要复刻帧协议 —— **客户端自己就带客户端桩**：
+
+```csharp
+// .NET Framework 4.8（Windows 内置，零安装）
+var asm = Assembly.LoadFrom(@"C:\Program Files\Nutstore\bin-7.2.12\NutstoreClient.Legacy.dll");
+var channelType = asm.GetType("GrpcDotNetNamedPipes.NamedPipeChannel");
+var channel = Activator.CreateInstance(channelType, ".", "BadgeGrpcNamedPipe.BadgeToNutstoreV3", options);
+var client  = Activator.CreateInstance(asm.GetType("NutstoreBadge").GetNestedType("NutstoreBadgeClient"), channel);
+// GetBadgeServerToken(Empty) → GrpcBadgeServerTokenResponse { Token, DomainName, UseSSL }
+```
+
+实测返回：`DomainName = badge.jianguoyun.com`、`UseSSL = True`、一个 JWT。
+
+### 可用方法（19 个）
+
+`ShareFileByLink`（分享链接）、`BrowseFileHistory`（文件历史）、`GetNutstoreFile`、
+`GetLockInfo`、`DiscussFile`、`GotoOnlineEdit`、`LogOpenFileEvent`、
+`ShowUploadFileDialog`、`ShowDownloadFileDialog`、`GetBadgeServerToken`、
+`InitializeBadge`、`ExitBadge`、`AddLockedFile`、`RemoveLockedFile`、
+`NotifyUpdateFile`、`IsLockedByBadge`、`UpdateBadgeServerToken`、
+`UpdateBadgeSettings`、`SaveBadgeSettings`
+
+> **更正**：早先判定「分享链接 / 文件历史没有程序接口，只能走 GUI」是**错的** ——
+> 它们在 `ShareFileByLink` / `BrowseFileHistory`。
+
+### 边界（重要）
+
+这是 **Badge（托盘）集成面**，它**没有**：创建同步文件夹、修改客户端设置、浏览远程目录。
+L3 的核心目标仍然要靠抓包复刻私有 API 或 UIA。
+
+### 四个坑
+
+1. **`serverName` 必须是 `"."`（机器名），不能是 `"localhost"`** —— 否则报
+   `Unavailable: failed to connect to all addresses`。
+2. **protobuf 描述符反射在客户端进程外会炸**：`ToString()` / `JsonFormatter` 会触发
+   `EmptyReflection..cctor()` → 混淆代码抛 NRE。**只用生成的属性读值**，不要格式化消息。
+3. **不要自己引 `GrpcDotNetNamedPipes` NuGet 包** —— 版本对不上，连上就被断开。
+   用客户端自带的。
+4. **从工作区目录启动的进程访问命名管道会被拒**（`UnauthorizedAccessException`，
+   所有 SQOS 级别都拒）。这是 DSH 沙箱的进程级限制，与文件策略无关。
+   把探针复制到工作区外（如 `%LOCALAPPDATA%`）再跑就正常。
+   —— 排查时先怀疑这个，别怀疑坚果云的 ACL。
+
+---
+
+## 9. 已完成构件
 
 | 构件 | 用途 |
 |---|---|
 | `recon/MetadataDump/` | .NET 元数据反射工具。枚举程序集的类型/接口/常量/字符串字面量，**不反编译、不执行目标代码**。用于复核「为什么不能写 DB」「IPC 到底有什么」等结论。用法：`MetadataDump <程序集> [命名空间] [类型]` / `MetadataDump --us <程序集>` |
+| `recon/PipeProbe/` | 试连命名管道并尝试 gRPC 反射（未成功 —— 服务端没注册反射） |
+| `recon/LoadProbe/` | 加载客户端程序集、枚举契约、实际调用。`--raw` 做纯净连接实验，`--call` 发起真实调用。**必须从工作区外运行** |
 
 ---
 
-## 9. 风险登记
+## 10. 风险登记
 
 | 风险 | 影响 | 缓解 |
 |---|---|---|
