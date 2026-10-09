@@ -41,8 +41,11 @@ public static class WriteGuards
         if (!r.UnlockPresent)
         {
             refusals.Add(
-                $"未设置环境变量 {UnlockVariable}=1 —— L3 写入默认关闭。"
-                + "这是刻意的：写入会改动同步配置，不该在没人盯着的时候可被触发。");
+                "L3 写入未解锁。解锁方式：把内容为 yes 的令牌文件放到"
+                + " %LOCALAPPDATA%\\NutstoreMcp\\l3-write.enabled，"
+                + "或设置环境变量 NUTSTORE_L3_WRITE=1（后者要重启客户端）。"
+                + "默认关闭是刻意的：写入会改动同步配置，不该在没人盯着的时候可被触发。"
+                + "撤销只需删掉那个文件。");
         }
 
         if (!r.Confirmed)

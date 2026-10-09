@@ -27,6 +27,52 @@ $ErrorActionPreference = 'Stop'
 
 # 客户端目录发现逻辑由 _client.ps1 提供（按版本号取最新，见那里的说明）
 . (Join-Path $PSScriptRoot '_client.ps1')
+
+<#
+.SYNOPSIS
+    读出契约程序集里两个接口的方法清单，拼成一个可比较的字符串。
+.DESCRIPTION
+    用来判断两处部署的契约是否「接口一致」。
+
+    不用文件哈希：.NET 构建不是逐字节可复现的（PE 头里带 MVID 和时间戳），
+    同样源码两次构建哈希就不同 —— 那会产生持续的假警报。
+
+    而真正导致跨域调用报「未在接口找到方法 X」的，是方法集合不同，比对这个才切题。
+#>
+function Get-ContractApi {
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$Path)
+
+    if (-not (Test-Path $Path)) {
+        return $null
+    }
+
+    try {
+        # 按字节加载：不锁文件，也不受加载上下文影响
+        $asm = [System.Reflection.Assembly]::Load([System.IO.File]::ReadAllBytes($Path))
+
+        $parts = foreach ($name in @(
+                'NutstoreMcp.Plugin.Contract.IPluginHost',
+                'NutstoreMcp.Plugin.Contract.IUiHook')) {
+            $type = $asm.GetType($name)
+            if (-not $type) {
+                continue
+            }
+
+            $methods = $type.GetMethods() | ForEach-Object { $_.Name } | Sort-Object -Unique
+            "$($type.Name){$($methods -join ',')}"
+        }
+
+        if (-not $parts) {
+            return $null
+        }
+
+        return ($parts -join ' | ')
+    }
+    catch {
+        return $null
+    }
+}
 $root = Split-Path $PSScriptRoot -Parent
 
 function Step($text) { Write-Host "  $text" -ForegroundColor Cyan }
@@ -159,21 +205,31 @@ if ($clientDir) {
     $stagedContract = Join-Path $Target 'NutstoreMcp.Plugin.Contract.dll'
 
     if (Test-Path $installedContract) {
-        $a = (Get-FileHash $installedContract -Algorithm SHA256).Hash
-        $b = (Get-FileHash $stagedContract -Algorithm SHA256).Hash
+        # 比对**接口方法清单**，不是文件哈希。
+        #
+        # 曾经用 SHA256，结果是持续误报：.NET 编译不是逐字节可复现的
+        # （PE 头里带 MVID 和时间戳），同样源码两次构建哈希就不同。
+        # 误报比不检查更糟 —— 它会把人训练成无视这个警告。
+        #
+        # 而真正导致「未在接口找到方法 X」的 RemotingException 的，是方法集合不同。
+        $installedApi = Get-ContractApi $installedContract
+        $stagedApi = Get-ContractApi $stagedContract
 
-        if ($a -ne $b) {
+        if ($null -eq $installedApi -or $null -eq $stagedApi) {
+            Write-Host '⚠️  读不出契约的方法清单 —— 跳过一致性检查' -ForegroundColor Yellow
+        }
+        elseif ($installedApi -ne $stagedApi) {
             Write-Host ''
-            Write-Host '⚠️  契约程序集两边不一致 —— 必须重装桥，否则跨域调用会报' -ForegroundColor Red
+            Write-Host '⚠️  契约程序集的接口不一致 —— 必须重装桥，否则跨域调用会报' -ForegroundColor Red
             Write-Host '   「未在接口找到方法 X」的 RemotingException，且现象上看不出原因。' -ForegroundColor Red
             Write-Host ''
-            Write-Host '   程序目录: ' -NoNewline; Write-Host $installedContract -ForegroundColor DarkGray
-            Write-Host '   插件目录: ' -NoNewline; Write-Host $stagedContract -ForegroundColor DarkGray
+            Write-Host "   程序目录: $installedApi" -ForegroundColor DarkGray
+            Write-Host "   插件目录: $stagedApi" -ForegroundColor DarkGray
             Write-Host ''
             Write-Host '   → 退出坚果云，以管理员运行：.\deploy\install.ps1，再启动坚果云' -ForegroundColor Yellow
         }
         else {
-            Write-Host '契约程序集两边一致 ✅' -ForegroundColor DarkGray
+            Write-Host '契约接口一致 ✅' -ForegroundColor DarkGray
         }
     }
     else {

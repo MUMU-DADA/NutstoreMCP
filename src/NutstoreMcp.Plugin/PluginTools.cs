@@ -44,9 +44,8 @@ public sealed class PluginTools
     {
         try
         {
-            var unlock = !string.IsNullOrWhiteSpace(
-                Environment.GetEnvironmentVariable(L3.WriteGuards.UnlockVariable))
-                && Environment.GetEnvironmentVariable(L3.WriteGuards.UnlockVariable)!.Trim() is "1" or "true" or "TRUE";
+            // 环境变量（进程级，需重启客户端才生效）或令牌文件（随时可建可删）
+            var unlock = PluginEntry.IsWriteUnlocked();
 
             var exists = !string.IsNullOrWhiteSpace(localPath) && Directory.Exists(localPath);
             var isDir = exists;

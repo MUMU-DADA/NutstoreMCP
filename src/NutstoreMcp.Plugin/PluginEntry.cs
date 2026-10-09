@@ -147,6 +147,49 @@ public static class PluginEntry
             "NutstoreMcp", "enabled.state")
         : _stateFile;
 
+    /// <summary>
+    /// L3 写入的解锁令牌文件。
+    /// </summary>
+    /// <remarks>
+    /// 为什么不用环境变量：环境变量属于客户端进程，改了要重启客户端才生效 ——
+    /// 而重启客户端是我们最想避免的操作。令牌文件可以随时创建、随时删除，
+    /// 撤销是立刻的。
+    ///
+    /// 要求内容是 <c>yes</c> 而不是「文件存在」：随手 New-Item 出来的空文件
+    /// 不该解锁写入。必须是刻意写下那个词。
+    /// </remarks>
+    public static string UnlockFilePath => Path.Combine(
+        Path.GetDirectoryName(StateFilePath) ?? ".",
+        "l3-write.enabled");
+
+    /// <summary>L3 写入是否已解锁。环境变量或令牌文件任一满足即可。</summary>
+    public static bool IsWriteUnlocked()
+    {
+        try
+        {
+            var env = Environment.GetEnvironmentVariable("NUTSTORE_L3_WRITE");
+            if (env is not null && (env.Trim() == "1" || env.Trim().Equals("true", StringComparison.OrdinalIgnoreCase)))
+            {
+                return true;
+            }
+        }
+        catch (Exception)
+        {
+            // 读环境变量失败就当没设
+        }
+
+        try
+        {
+            var path = UnlockFilePath;
+            return File.Exists(path)
+                && File.ReadAllText(path).Trim().Equals("yes", StringComparison.OrdinalIgnoreCase);
+        }
+        catch (Exception)
+        {
+            return false;
+        }
+    }
+
     /// <summary>读开关状态。文件不存在时视为开启（首次安装即用）。</summary>
     public static bool ReadEnabledState()
     {
