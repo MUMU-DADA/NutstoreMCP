@@ -907,6 +907,80 @@ public sealed class PluginTools
             }, Indented);
         }
     }
+    [McpServerTool(Name = "nutstore_l3_object_detail", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = true)]
+    [Description("读某个本地文件在云端的对象详情（云端 ID、版本号、大小、哈希、是否已删除、来源机器）。只读，不需要解锁令牌。传本地文件路径即可。")]
+    public static string L3ObjectDetail([Description("本地文件的绝对路径")] string localFilePath)
+    {
+        var ui = PluginEntry.Ui;
+        if (ui is null) return UiUnavailable;
+
+        try
+        {
+            if (string.IsNullOrWhiteSpace(localFilePath) || !Path.IsPathRooted(localFilePath))
+                return JsonSerializer.Serialize(new { ok = false, reason = "需要绝对的本地文件路径。" }, Indented);
+
+            var r = TryResolveSandbox(ui, localFilePath);
+            if (r.Error is not null) return r.Error;
+
+            return ui.ReadObjectDetail(r.Id, r.Magic, r.Root!, localFilePath);
+        }
+        catch (Exception ex)
+        {
+            return JsonSerializer.Serialize(new
+            {
+                ok = false,
+                reason = $"{ex.GetType().Name}: {ex.Message}",
+                note = "钩子没有 ReadObjectDetail —— 需要一次重启装上。",
+            }, Indented);
+        }
+    }
+
+    [McpServerTool(Name = "nutstore_l3_latest_event", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = true)]
+    [Description("读某个同步文件夹的最新事件 ID（增量同步的游标）。只读，不需要解锁令牌。sandboxId 与 magic 从 nutstore_l3_sync_folders 取。")]
+    public static string L3LatestEvent(
+        [Description("沙箱 ID")] long sandboxId,
+        [Description("沙箱的内部标识（magic）")] long magic)
+    {
+        var ui = PluginEntry.Ui;
+        if (ui is null) return UiUnavailable;
+
+        try
+        {
+            // localRoot 从同步文件夹列表里取 —— NSSandbox 需要它
+            using var doc = JsonDocument.Parse(ui.ReadClientSyncFolders());
+            if (!doc.RootElement.TryGetProperty("sandboxes", out var list))
+                return JsonSerializer.Serialize(new { ok = false, reason = "读同步文件夹列表失败。" }, Indented);
+
+            string? root = null;
+            foreach (var s in list.EnumerateArray())
+            {
+                var id = s.TryGetProperty("id", out var i) && long.TryParse(i.GetString(), out var pid) ? pid : 0;
+                if (id == sandboxId)
+                {
+                    root = s.TryGetProperty("localPath", out var lp) ? lp.GetString() : null;
+                    break;
+                }
+            }
+
+            if (string.IsNullOrWhiteSpace(root))
+                return JsonSerializer.Serialize(new
+                {
+                    ok = false,
+                    reason = $"沙箱 {sandboxId} 没有本地路径 —— 事件 ID 需要该沙箱已绑定到本地。",
+                }, Indented);
+
+            return ui.ReadLatestEventId(sandboxId, magic, root!);
+        }
+        catch (Exception ex)
+        {
+            return JsonSerializer.Serialize(new
+            {
+                ok = false,
+                reason = $"{ex.GetType().Name}: {ex.Message}",
+                note = "钩子没有 ReadLatestEventId —— 需要一次重启装上。",
+            }, Indented);
+        }
+    }
     [McpServerTool(Name = "nutstore_client_search_types", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
     [Description("按名字子串搜索坚果云客户端的所有类型（跨全部程序集）。用于在不知道类型全名时定位 API。只读，不执行任何客户端代码。")]
     public static string ClientSearchTypes(

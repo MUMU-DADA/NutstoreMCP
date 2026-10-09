@@ -2289,6 +2289,155 @@ public sealed class UiHook : MarshalByRefObject, IUiHook
         }
     }
 
+    /// <summary>构造 NSSandbox。失败时返回原因。</summary>
+    private static object? BuildNSSandbox(long sandboxId, long magic, string localRoot, out string? error)
+    {
+        error = null;
+
+        var t = FindClientType("NutstoreClient.Common.NSSandbox");
+        if (t is null)
+        {
+            error = "找不到 NSSandbox（版本可能变了）";
+            return null;
+        }
+
+        var box = Activator.CreateInstance(
+            t,
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+            binder: null,
+            args: new object[] { sandboxId, magic, localRoot, false },
+            culture: null);
+
+        if (box is null) error = "NSSandbox 构造失败";
+        return box;
+    }
+
+    /// <summary>
+    /// 读某个本地文件在云端的对象详情。只读。
+    /// </summary>
+    /// <remarks>
+    /// 目标：c55ca68332481ffab4014efe97582ac93(NSSandbox, NutstorePath)
+    ///   → DownstreamObjectEntityBean { id, path(byte[]), objectType, version,
+    ///     size, hash, deleted, compressible, srcMachineName, tblId }
+    /// 注意这是**字段**不是属性。
+    /// </remarks>
+    public string ReadObjectDetail(long sandboxId, long magic, string localRoot, string localFilePath)
+    {
+        try
+        {
+            var argError = CheckPathArgs(sandboxId, magic, localRoot, localFilePath);
+            if (argError is not null) return Json.Obj(("ok", false), ("reason", argError));
+
+            var api = FindClientType(CloudOpsTypeName);
+            if (api is null) return Json.Obj(("ok", false), ("reason", "找不到云端操作层（版本可能变了）"));
+
+            var box = BuildNSSandbox(sandboxId, magic, localRoot, out var boxError);
+            if (box is null) return Json.Obj(("ok", false), ("reason", boxError));
+
+            var nsPath = BuildNutstorePath(sandboxId, magic, localRoot, localFilePath, out var pathError);
+            if (nsPath is null) return Json.Obj(("ok", false), ("reason", pathError));
+
+            var method = api.GetMethod(
+                "c55ca68332481ffab4014efe97582ac93",
+                BindingFlags.Public | BindingFlags.Static,
+                binder: null,
+                types: new[] { box.GetType(), nsPath.GetType() },
+                modifiers: null);
+
+            if (method is null) return Json.Obj(("ok", false), ("reason", "找不到对象详情方法（混淆名可能变了）"));
+
+            var bean = method.Invoke(null, new[] { box, nsPath });
+            if (bean is null) return Json.Obj(("ok", false), ("reason", "客户端返回 null"));
+
+            // path 是 byte[]，要按客户端自己的 UTF8 转换还原成字符串
+            string? pathText = null;
+            if (Get(bean, "path") is byte[] bytes)
+            {
+                try
+                {
+                    var helper = FindClientType("NutstoreLib.Utils.StringUtils");
+                    var toStr = helper?.GetMethod("UTF8BytesToString", BindingFlags.Public | BindingFlags.Static,
+                        binder: null, types: new[] { typeof(byte[]) }, modifiers: null);
+
+                    pathText = toStr is not null
+                        ? toStr.Invoke(null, new object[] { bytes }) as string
+                        : Encoding.UTF8.GetString(bytes);
+                }
+                catch (Exception)
+                {
+                    pathText = null;
+                }
+            }
+
+            return Json.Obj(
+                ("ok", true),
+                ("domain", AppDomain.CurrentDomain.FriendlyName),
+                ("localFilePath", localFilePath),
+                ("id", Get(bean, "id")?.ToString()),
+                ("cloudPath", pathText),
+                ("objectType", Get(bean, "objectType")?.ToString()),
+                ("version", Get(bean, "version")?.ToString()),
+                ("sizeBytes", Get(bean, "size")?.ToString()),
+                ("size", Human(AsLong(Get(bean, "size")))),
+                ("hash", Get(bean, "hash")?.ToString()),
+                ("deleted", BoolText(Get(bean, "deleted"))),
+                ("compressible", BoolText(Get(bean, "compressible"))),
+                ("srcMachineName", Get(bean, "srcMachineName")?.ToString()),
+                ("tblId", Get(bean, "tblId")?.ToString()));
+        }
+        catch (Exception ex)
+        {
+            return Json.Obj(("ok", false), ("reason", ex.GetType().Name + ": " + ex.Message),
+                ("chain", Json.StringArray(Chain(ex))));
+        }
+    }
+
+    /// <summary>
+    /// 读某个沙箱的最新事件 ID。只读。
+    /// </summary>
+    /// <remarks>
+    /// 目标：cbb28d79821068cd4efb5de6f9109afff(NSSandbox) → long
+    /// 实测「我的坚果云」返回一个游标值。这个值是增量同步的游标 ——
+    /// 拿到它才能谈「从某个时间点之后有什么变化」。
+    /// </remarks>
+    public string ReadLatestEventId(long sandboxId, long magic, string localRoot)
+    {
+        try
+        {
+            if (sandboxId <= 0 || magic <= 0) return Json.Obj(("ok", false), ("reason", "sandboxId / magic 必须为正数"));
+            if (string.IsNullOrWhiteSpace(localRoot) || !Path.IsPathRooted(localRoot))
+                return Json.Obj(("ok", false), ("reason", "localRoot 必须是绝对的本地路径"));
+
+            var api = FindClientType(CloudOpsTypeName);
+            if (api is null) return Json.Obj(("ok", false), ("reason", "找不到云端操作层（版本可能变了）"));
+
+            var box = BuildNSSandbox(sandboxId, magic, localRoot, out var boxError);
+            if (box is null) return Json.Obj(("ok", false), ("reason", boxError));
+
+            var method = api.GetMethod(
+                "cbb28d79821068cd4efb5de6f9109afff",
+                BindingFlags.Public | BindingFlags.Static,
+                binder: null,
+                types: new[] { box.GetType() },
+                modifiers: null);
+
+            if (method is null) return Json.Obj(("ok", false), ("reason", "找不到事件 ID 方法（混淆名可能变了）"));
+
+            var value = method.Invoke(null, new[] { box });
+
+            return Json.Obj(
+                ("ok", true),
+                ("domain", AppDomain.CurrentDomain.FriendlyName),
+                ("sandboxId", sandboxId.ToString(CultureInfo.InvariantCulture)),
+                ("latestEventId", value?.ToString()));
+        }
+        catch (Exception ex)
+        {
+            return Json.Obj(("ok", false), ("reason", ex.GetType().Name + ": " + ex.Message),
+                ("chain", Json.StringArray(Chain(ex))));
+        }
+    }
+
     private static string BoolText(object? v) => (v as bool? ?? false) ? "true" : "false";
 
     /// <summary>

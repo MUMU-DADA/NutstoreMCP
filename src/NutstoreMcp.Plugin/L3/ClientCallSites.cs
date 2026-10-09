@@ -123,6 +123,20 @@ internal static class ClientCallSites
             Why: "纯读。不带参数，只取联系人列表，不邀请、不写任何东西。"),
 
         new(
+            CloudOpsType,
+            "c55ca68332481ffab4014efe97582ac93",
+            "读对象详情（ReadObjectDetail）",
+            Mutates: false,
+            Why: "纯读。只按 NSSandbox + NutstorePath 查询该对象的元数据，不写任何东西。"),
+
+        new(
+            CloudOpsType,
+            "cbb28d79821068cd4efb5de6f9109afff",
+            "读最新事件 ID（ReadLatestEventId）",
+            Mutates: false,
+            Why: "纯读。只按 NSSandbox 查询当前同步游标，不推进游标、不写任何东西。"),
+
+        new(
             "（通用）",
             "InvokeBridge",
             "通用反射桥 —— 让插件侧在不改钩子的前提下调用客户端实现",

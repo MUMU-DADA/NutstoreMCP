@@ -203,4 +203,10 @@ public interface IUiHook
     /// 写操作的策略（解锁、dryRun、白名单）仍在插件侧。
     /// </remarks>
     string InvokeBridge(string script);
+
+    /// <summary>读某个本地文件在云端的对象详情（版本、大小、哈希等）。只读。</summary>
+    string ReadObjectDetail(long sandboxId, long magic, string localRoot, string localFilePath);
+
+    /// <summary>读某个沙箱的最新事件 ID。只读。</summary>
+    string ReadLatestEventId(long sandboxId, long magic, string localRoot);
 }
