@@ -188,7 +188,9 @@ public sealed partial class UiHook
                 uploaded = upload.Invoke(null, new[] { identifier, (object)stream, (object)(long)size, (object)(long)size, compression, md5 });
             }
 
-            var contentName = uploaded is null ? null : CapabilityMember(uploaded, "name") as string;
+            // 上传入口的返回类型是 string：客户端内部已经把 ObjectNameResponse.name 解出来了，
+            // 直接就是内容对象标识，原样填进 CreateFileParam，不自行变换编码。
+            var contentName = uploaded as string;
             if (string.IsNullOrWhiteSpace(contentName))
                 throw new CapabilityFailureException("上传没有返回内容对象标识");
             contentUploaded = true;
