@@ -42,6 +42,7 @@
   <ItemGroup>
     <Compile Include="..\..\src\NutstoreMcp.Plugin\L3\WriteGuards.cs" Link="L3\WriteGuards.cs" />
     <Compile Include="..\..\src\NutstoreMcp.Plugin\L3\ForbiddenClientMethods.cs" Link="L3\ForbiddenClientMethods.cs" />
+    <Compile Include="..\..\src\NutstoreMcp.Plugin\L3\CloudFolderName.cs" Link="L3\CloudFolderName.cs" />
   </ItemGroup>
 
 </Project>

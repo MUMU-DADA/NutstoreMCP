@@ -286,13 +286,10 @@ public sealed class PluginTools
                 refusals.Add("调用方没有传 confirm=true。");
             }
 
-            if (string.IsNullOrWhiteSpace(name))
+            var nameError = L3.CloudFolderName.Validate(name);
+            if (nameError is not null)
             {
-                refusals.Add("文件夹名为空。");
-            }
-            else if (name.IndexOfAny(['/', '\\', ':', '*', '?', '"', '<', '>', '|']) >= 0)
-            {
-                refusals.Add($"文件夹名含非法字符: {name}");
+                refusals.Add(nameError);
             }
 
             // 建云端文件夹是**远程写**，即使云端没有同名项也不会覆盖任何东西，
