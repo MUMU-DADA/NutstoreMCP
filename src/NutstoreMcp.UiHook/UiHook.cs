@@ -1210,21 +1210,50 @@ public sealed class UiHook : MarshalByRefObject, IUiHook
             // ── 持久化 ──
             // IsAutoSave 为真时客户端自己会存；否则要显式 Save。
             var isAutoSave = itemType.GetProperty("IsAutoSave")?.GetValue(item) as bool? ?? false;
-            var saved = false;
+            var save = itemType.GetMethod("Save", BindingFlags.Public | BindingFlags.Instance,
+                binder: null, types: new[] { typeof(bool) }, modifiers: null);
+
+            var saveCalled = false;
+            string? saveError = null;
 
             if (!isAutoSave)
             {
-                var save = itemType.GetMethod("Save", BindingFlags.Public | BindingFlags.Instance,
-                    binder: null, types: new[] { typeof(bool) }, modifiers: null);
-
                 if (save is not null)
                 {
-                    save.Invoke(item, new object[] { true });
-                    saved = true;
+                    try
+                    {
+                        save.Invoke(item, new object[] { true });
+                        saveCalled = true;
+                    }
+                    catch (Exception ex)
+                    {
+                        // 保存失败必须报出来：内存里改了、磁盘上没改，
+                        // 重启后设置会「自己变回去」，那种现象最难查
+                        saveError = ex.InnerException?.Message ?? ex.Message;
+                    }
+                }
+                else
+                {
+                    saveError = "没找到 Save(bool) 方法";
                 }
             }
 
             var after = valueProp.GetValue(item)?.ToString();
+            var matches = string.Equals(after, target?.ToString(), StringComparison.Ordinal);
+
+            var warnings = new List<string>();
+            if (!matches)
+            {
+                warnings.Add("写完之后的值与目标不一致 —— 客户端可能拒绝了这次改动。");
+            }
+
+            if (!isAutoSave && !saveCalled)
+            {
+                warnings.Add(
+                    "改动只在内存里，**没有落盘**"
+                    + (saveError is null ? "。" : $"（{saveError}）。")
+                    + "重启客户端后会变回去。");
+            }
 
             return Json.Obj(
                 ("ok", true),
@@ -1234,11 +1263,11 @@ public sealed class UiHook : MarshalByRefObject, IUiHook
                 ("after", after),
                 ("target", value),
                 ("autoSave", isAutoSave),
-                ("explicitSaveCalled", saved),
+                ("saveCalled", saveCalled),
+                ("saveError", saveError),
+                ("persisted", isAutoSave || saveCalled),
                 ("isChanged", (itemType.GetProperty("IsChanged")?.GetValue(item) as bool? ?? false).ToString()),
-                ("effective", string.Equals(after, target?.ToString(), StringComparison.Ordinal)
-                    ? "值是目标值"
-                    : "⚠️ 写完之后的值与目标不一致 —— 客户端可能拒绝了这次改动"));
+                ("warnings", Json.StringArray(warnings)));
         }
         catch (Exception ex)
         {
