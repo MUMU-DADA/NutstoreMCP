@@ -976,6 +976,138 @@ public sealed class UiHook : MarshalByRefObject, IUiHook
         }
     }
 
+    /// <summary>
+    /// 读出客户端当前的设置项。
+    /// </summary>
+    /// <remarks>
+    /// 只读。走客户端自己的 IConfigureService —— 它是 Prism 6.x 那套，
+    /// 活服务从静态的 CommonServiceLocator.ServiceLocator.Current 取，
+    /// 不需要遍历对象图。
+    ///
+    /// 每个设置项是 ConfigureItem&lt;T&gt;，值在它的 Value 属性上。
+    /// 这里按名字动态取，不硬编码泛型参数类型 —— 客户端加新设置时不会漏。
+    /// </remarks>
+    public string ReadClientSettings()
+    {
+        try
+        {
+            var locatorType = FindClientType("CommonServiceLocator.ServiceLocator");
+            var serviceType = FindClientType("Nutstore.Client.Wpf.Services.IConfigureService");
+
+            if (locatorType is null || serviceType is null)
+            {
+                return Json.Obj(
+                    ("ok", false),
+                    ("reason", "找不到 ServiceLocator 或 IConfigureService"
+                             + " —— 客户端多半升级了。"));
+            }
+
+            var current = locatorType.GetProperty("Current", BindingFlags.Public | BindingFlags.Static)
+                ?.GetValue(null);
+
+            if (current is null)
+            {
+                return Json.Obj(
+                    ("ok", false),
+                    ("reason", "ServiceLocator.Current 为空 —— 容器还没建好，或客户端不用这套定位器。"));
+            }
+
+            // IServiceLocator.GetInstance(Type)
+            var getInstance = current.GetType().GetMethod(
+                "GetInstance",
+                BindingFlags.Public | BindingFlags.Instance,
+                binder: null,
+                types: new[] { typeof(Type) },
+                modifiers: null);
+
+            if (getInstance is null)
+            {
+                return Json.Obj(("ok", false), ("reason", "ServiceLocator 上没有 GetInstance(Type)"));
+            }
+
+            var service = getInstance.Invoke(current, new object[] { serviceType });
+            if (service is null)
+            {
+                return Json.Obj(("ok", false), ("reason", "容器没能解析出 IConfigureService"));
+            }
+
+            var items = new List<string>();
+            var raw = new StringBuilder();
+
+            raw.Append('{');
+            var first = true;
+
+            foreach (var prop in serviceType.GetProperties(BindingFlags.Public | BindingFlags.Instance))
+            {
+                object? item;
+                try
+                {
+                    item = prop.GetValue(service);
+                }
+                catch (Exception ex)
+                {
+                    item = null;
+                    raw.Append(first ? string.Empty : ",").Append(Json.Quote(prop.Name))
+                       .Append(":{\"error\":").Append(Json.Quote(ex.GetType().Name)).Append('}');
+                    first = false;
+                    continue;
+                }
+
+                if (item is null)
+                {
+                    continue;
+                }
+
+                // 值在 ConfigureItem<T>.Value 上；Proxy / Storage 这类不是 ConfigureItem，
+                // 取不到 Value 就只报它的类型名
+                var valueProp = item.GetType().GetProperty("Value", BindingFlags.Public | BindingFlags.Instance);
+
+                string rendered;
+                if (valueProp is null)
+                {
+                    rendered = "{\"type\":" + Json.Quote(item.GetType().Name) + "}";
+                }
+                else
+                {
+                    object? value;
+                    try
+                    {
+                        value = valueProp.GetValue(item);
+                    }
+                    catch (Exception ex)
+                    {
+                        value = "<" + ex.GetType().Name + ">";
+                    }
+
+                    rendered = "{\"value\":" + Json.Quote(value?.ToString() ?? "(null)")
+                             + ",\"changed\":" + ((item.GetType().GetProperty("IsChanged")
+                                 ?.GetValue(item) as bool? ?? false) ? "true" : "false")
+                             + "}";
+                }
+
+                raw.Append(first ? string.Empty : ",").Append(Json.Quote(prop.Name)).Append(':').Append(rendered);
+                first = false;
+                items.Add(prop.Name);
+            }
+
+            raw.Append('}');
+
+            return Json.Obj(
+                ("ok", true),
+                ("domain", AppDomain.CurrentDomain.FriendlyName),
+                ("source", "IConfigureService（客户端自己的设置服务）"),
+                ("count", items.Count),
+                ("settings", new Json.Raw(raw.ToString())));
+        }
+        catch (Exception ex)
+        {
+            return Json.Obj(
+                ("ok", false),
+                ("reason", ex.GetType().Name + ": " + ex.Message),
+                ("chain", Json.StringArray(Chain(ex))));
+        }
+    }
+
     private static List<string> Chain(Exception ex)
     {
         var result = new List<string>();

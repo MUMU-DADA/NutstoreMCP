@@ -372,6 +372,31 @@ public sealed class PluginTools
         }
     }
 
+    [McpServerTool(Name = "nutstore_l3_read_settings", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
+    [Description("读出客户端当前的设置项（开机自动启动、同步完成后关机、高级安全验证、文件保护锁等），走客户端自己的 IConfigureService。只读，不修改任何设置，不需要解锁令牌。")]
+    public static string L3ReadSettings()
+    {
+        var ui = PluginEntry.Ui;
+        if (ui is null)
+        {
+            return UiUnavailable;
+        }
+
+        try
+        {
+            return ui.ReadClientSettings();
+        }
+        catch (Exception ex)
+        {
+            return JsonSerializer.Serialize(new
+            {
+                ok = false,
+                reason = $"{ex.GetType().Name}: {ex.Message}",
+                note = "钩子没有 ReadClientSettings —— 需要重启客户端让新钩子生效。",
+            }, Indented);
+        }
+    }
+
     [McpServerTool(Name = "nutstore_client_search_types", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
     [Description("按名字子串搜索坚果云客户端的所有类型（跨全部程序集）。用于在不知道类型全名时定位 API。只读，不执行任何客户端代码。")]
     public static string ClientSearchTypes(

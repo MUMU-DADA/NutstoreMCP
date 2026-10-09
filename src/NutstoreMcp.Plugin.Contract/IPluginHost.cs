@@ -146,4 +146,10 @@ public interface IUiHook
     /// </summary>
     /// <remarks>只读。返回该目录下的路径列表。</remarks>
     string ListCloudDirectory(long sandboxId, long magic, string directory);
+
+    /// <summary>
+    /// 读出客户端当前的设置项（走它自己的 IConfigureService）。
+    /// </summary>
+    /// <remarks>只读，不修改任何设置。</remarks>
+    string ReadClientSettings();
 }
