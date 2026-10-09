@@ -27,4 +27,7 @@
     <ProjectReference Include="..\..\src\NutstoreMcp.Plugin\NutstoreMcp.Plugin.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <Compile Include="..\..\src\NutstoreMcp.ClientBindings\ClientSymbols.cs" Link="ClientBindings\ClientSymbols.cs" />
+  </ItemGroup>
 </Project>

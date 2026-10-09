@@ -1,3 +1,5 @@
+// 在客户端域内执行受限反射脚本。
+using NutstoreMcp.ClientBindings;
 using System;
 using System.Collections.Generic;
 using System.Globalization;
@@ -44,7 +46,7 @@ namespace NutstoreMcp.UiHook
         [
             "NutstoreClient",
             "Nutstore",
-            "A",          // 混淆类的命名空间
+            "NutstoreLib",
         ];
 
         /// <summary>
@@ -54,17 +56,7 @@ namespace NutstoreMcp.UiHook
         /// 这是**兜底**，不是唯一防线。插件侧的 ForbiddenClientMethods 是主防线，
         /// 但通用桥的存在意味着绕过插件直接调桥是可能的，所以这里必须再挡一道。
         /// </remarks>
-        private static readonly string[] ForbiddenMethods =
-        [
-            "RemoveSandbox",
-            "MigrateSandboxPath",
-            "UnregisterAllNutstoreSyncRoots",
-            "UnregisterSyncRootsOfAccount",
-            "UnregisterSyncRoot",
-            "DisconnectSyncRoot",
-            "DeleteObject",
-            "RemoveObject",
-        ];
+        private static readonly string[] ForbiddenMethods = ClientSymbols.ForbiddenMethodNames;
 
         public sealed class Result
         {
@@ -260,17 +252,24 @@ namespace NutstoreMcp.UiHook
         private static object? ReadMember(object target, string name)
         {
             var t = target.GetType();
+            GuardClientObject(target);
+            GuardMethod(name);
 
             var prop = t.GetProperty(name, BindingFlags.Public | BindingFlags.Instance);
             if (prop is not null)
             {
-                return prop.GetValue(target);
+                var getter = prop.GetGetMethod(nonPublic: false)
+                    ?? throw new ArgumentException("成员没有公开 getter");
+                GuardClientType(getter.DeclaringType!);
+                GuardMethod(getter.Name);
+                return GuardResult(prop.GetValue(target));
             }
 
             var field = t.GetField(name, BindingFlags.Public | BindingFlags.Instance);
             if (field is not null)
             {
-                return field.GetValue(target);
+                GuardClientType(field.DeclaringType!);
+                return GuardResult(field.GetValue(target));
             }
 
             throw new ArgumentException($"{t.Name} 上没有公开成员 {name}");
@@ -299,16 +298,33 @@ namespace NutstoreMcp.UiHook
                 throw new ArgumentException($"找不到类型 {name}");
             }
 
-            var asm = type.Assembly.GetName().Name ?? string.Empty;
-            var allowed = AllowedAssemblyPrefixes.Any(p => asm.StartsWith(p, StringComparison.OrdinalIgnoreCase));
-
-            if (!allowed)
-            {
-                throw new ArgumentException(
-                    $"类型 {name} 属于程序集 {asm}，不是客户端自己的程序集 —— 拒绝执行。");
-            }
-
+            GuardClientType(type);
             return type;
+        }
+
+        private static void GuardClientType(Type type)
+        {
+            var assembly = type.Assembly.GetName().Name ?? string.Empty;
+            if (!AllowedAssemblyPrefixes.Any(prefix =>
+                assembly.Equals(prefix, StringComparison.OrdinalIgnoreCase)
+                || assembly.StartsWith(prefix + ".", StringComparison.OrdinalIgnoreCase)))
+                throw new ArgumentException("类型 " + type.FullName + " 不是客户端自己的类型，拒绝执行。");
+            if (typeof(MemberInfo).IsAssignableFrom(type) || typeof(Assembly).IsAssignableFrom(type)
+                || typeof(Module).IsAssignableFrom(type) || typeof(Delegate).IsAssignableFrom(type))
+                throw new ArgumentException("拒绝操作反射或委托对象。");
+        }
+
+        private static void GuardClientObject(object target)
+        {
+            GuardResult(target);
+            GuardClientType(target.GetType());
+        }
+
+        private static object? GuardResult(object? value)
+        {
+            if (value is MemberInfo || value is Assembly || value is Module || value is Delegate)
+                throw new ArgumentException("客户端返回反射或委托对象，拒绝继续执行。");
+            return value;
         }
 
         private static void GuardMethod(string methodName)
@@ -347,6 +363,7 @@ namespace NutstoreMcp.UiHook
             object target, string methodName, List<object?> args,
             Dictionary<string, string> refUpdates, int scriptLine)
         {
+            GuardClientObject(target);
             var method = FindMethod(target.GetType(), methodName, args, requireStatic: false);
             return InvokeAndCollect(method, target, args, refUpdates, scriptLine);
         }
@@ -356,6 +373,8 @@ namespace NutstoreMcp.UiHook
             MethodInfo method, object? target, List<object?> args,
             Dictionary<string, string> refUpdates, int scriptLine)
         {
+            GuardClientType(method.DeclaringType!);
+            GuardMethod(method.Name);
             var boxed = args.ToArray();
             var result = method.Invoke(target, boxed);
 
@@ -372,7 +391,7 @@ namespace NutstoreMcp.UiHook
                     $"{ps[i].Name ?? ("arg" + i)} => {boxed[i] ?? "null"}";
             }
 
-            return result;
+            return GuardResult(result);
         }
 
         /// <summary>

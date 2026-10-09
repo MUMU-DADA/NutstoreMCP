@@ -134,6 +134,23 @@ try {
 }
 finally { Pop-Location }
 
+# ── 5. 客户端绑定登记与检查器自测（不需要安装客户端）──
+Step '客户端绑定登记与检查器离线自测'
+Push-Location $root
+try {
+    & (Join-Path $root 'deploy\_bindings.tests.ps1')
+    $bindingTests = & dotnet run --project recon/ClientBindingCheck -- --self-test 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        throw ($bindingTests -join "`n")
+    }
+    Ok '绑定登记和元数据检查器自测通过'
+}
+catch {
+    Bad $_.Exception.Message
+    $failures.Add('binding-tests')
+}
+finally { Pop-Location }
+
 # ── 汇总 ──
 Write-Host ''
 if ($failures.Count -eq 0) {

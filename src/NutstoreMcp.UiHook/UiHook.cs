@@ -1,3 +1,5 @@
+// 执行客户端界面与云端能力。
+using NutstoreMcp.ClientBindings;
 using System.Globalization;
 using System.Reflection;
 using System.Text;
@@ -31,7 +33,7 @@ namespace NutstoreMcp.UiHook;
 ///
 /// <para>所有方法都在 UI 线程上执行，且**绝不抛异常**。</para>
 /// </summary>
-public sealed class UiHook : MarshalByRefObject, IUiHook
+public sealed partial class UiHook : MarshalByRefObject, IUiHook
 {
     /// <summary>跨域句柄不过期。</summary>
     public override object InitializeLifetimeService() => null!;
@@ -536,7 +538,7 @@ public sealed class UiHook : MarshalByRefObject, IUiHook
                     }
                 }
 
-                var dao = FindClientType("NutstoreClient.DAO.NSSandboxDAO");
+                var dao = FindClientType(ClientSymbols.SandboxDaoType);
                 if (dao is null)
                 {
                     return Json.Obj(("ok", false), ("reason", "默认域里找不到 NSSandboxDAO"));
@@ -652,9 +654,9 @@ public sealed class UiHook : MarshalByRefObject, IUiHook
                 return Json.Obj(("ok", false), ("reason", "pathPerms 缺失或长度不匹配 —— 权限不明，拒绝绑定"));
             }
 
-            var dao = FindClientType("NutstoreClient.DAO.NSSandboxDAO");
-            var sandboxType = FindClientType("NutstoreClient.Common.NSSandbox");
-            var beanType = FindClientType("NutstoreClient.Common.CapsOnPathBean");
+            var dao = FindClientType(ClientSymbols.SandboxDaoType);
+            var sandboxType = FindClientType(ClientSymbols.NSSandboxType);
+            var beanType = FindClientType(ClientSymbols.CapsOnPathType);
 
             if (dao is null || sandboxType is null || beanType is null)
             {
@@ -774,8 +776,8 @@ public sealed class UiHook : MarshalByRefObject, IUiHook
                 return Json.Obj(("ok", false), ("reason", "文件夹名不能是 . 或 .."));
             }
 
-            const string ApiType = "A.c3795a089d76f103f11c4fe70f38ac8ca";
-            const string ApiMethod = "ccdd0d7373903386c87fb2d3077bf8ced";
+            const string ApiType = ClientSymbols.CloudOpsType;
+            const string ApiMethod = ClientSymbols.CreateSandbox;
 
             var api = FindClientType(ApiType);
             if (api is null)
@@ -786,7 +788,7 @@ public sealed class UiHook : MarshalByRefObject, IUiHook
                              + "需要重新反编译确认混淆名。"));
             }
 
-            var aclType = FindClientType("Nutstore.Common.SandboxACL");
+            var aclType = FindClientType(ClientSymbols.SandboxAclType);
             var getDefaultPerm = aclType?.GetMethod("GetDefaultPerm", BindingFlags.Public | BindingFlags.Static);
             if (getDefaultPerm is null)
             {
@@ -890,7 +892,7 @@ public sealed class UiHook : MarshalByRefObject, IUiHook
     /// <remarks>
     /// 只读。不需要解锁令牌。
     ///
-    /// 目标是 c05097d346f069f32352068d6ff359701(SandboxIdentifier, string dir, string type)
+    /// 目标是 ClientSymbols.ListDirectory(SandboxIdentifier, string dir, string type)
     /// → List&lt;string&gt;：内部自动翻页拉全，返回目录下的路径。
     /// 所有真实调用者都传 type = null。
     ///
@@ -913,11 +915,11 @@ public sealed class UiHook : MarshalByRefObject, IUiHook
                 return Json.Obj(("ok", false), ("reason", "云端路径必须以 / 开头: " + dir));
             }
 
-            const string ApiType = "A.c3795a089d76f103f11c4fe70f38ac8ca";
-            const string ApiMethod = "c05097d346f069f32352068d6ff359701";
+            const string ApiType = ClientSymbols.CloudOpsType;
+            const string ApiMethod = ClientSymbols.ListDirectory;
 
             var api = FindClientType(ApiType);
-            var identifierType = FindClientType("Nutstore.Common.SandboxIdentifier");
+            var identifierType = FindClientType(ClientSymbols.SandboxIdentifierType);
 
             if (api is null || identifierType is null)
             {
@@ -1350,7 +1352,7 @@ public sealed class UiHook : MarshalByRefObject, IUiHook
     /// 在云端按关键词搜索。只读。
     /// </summary>
     /// <remarks>
-    /// 目标：c7a517b89b338a47fe91fa3ec2a0823c3(string) → SearchResponse
+    /// 目标：ClientSymbols.Search(string) → SearchResponse
     ///   SearchResponse.Results : List&lt;SearchSandboxInfo&gt;
     ///     SearchSandboxInfo { ResultType, SandboxId, Children }
     ///       Children : List&lt;SearchFileInfo&gt; { Path, IsDir, ModifyTime }
@@ -1371,7 +1373,7 @@ public sealed class UiHook : MarshalByRefObject, IUiHook
             }
 
             var method = api.GetMethod(
-                "c7a517b89b338a47fe91fa3ec2a0823c3",
+                ClientSymbols.Search,
                 BindingFlags.Public | BindingFlags.Static,
                 binder: null,
                 types: new[] { typeof(string) },
@@ -1464,7 +1466,7 @@ public sealed class UiHook : MarshalByRefObject, IUiHook
         }
     }
     /// <remarks>
-    /// 目标：cf22046b2931cec246e3a4f4b994e6c84() → UserMeteringBean
+    /// 目标：ClientSymbols.ReadUsage() → UserMeteringBean
     ///   { UsedStorageSize, TotalStorageSize, FreeDownRate, FreeUpRate,
     ///     UsedUpRate, UsedDownRate, IsPaidUser, IsInTeam,
     ///     AccountExpireLeftTime, RateResetLeftMills }
@@ -1480,7 +1482,7 @@ public sealed class UiHook : MarshalByRefObject, IUiHook
             }
 
             var method = api.GetMethod(
-                "cf22046b2931cec246e3a4f4b994e6c84",
+                ClientSymbols.ReadUsage,
                 BindingFlags.Public | BindingFlags.Static,
                 binder: null,
                 types: Type.EmptyTypes,
@@ -1608,13 +1610,13 @@ public sealed class UiHook : MarshalByRefObject, IUiHook
     }
 
     /// <summary>客户端云端操作层的混淆类名。名字是哈希，只能按字面量定位。</summary>
-    private const string CloudOpsTypeName = "A.c3795a089d76f103f11c4fe70f38ac8ca";
+    private const string CloudOpsTypeName = ClientSymbols.CloudOpsType;
 
     /// <summary>
     /// 读账号信息。只读。
     /// </summary>
     /// <remarks>
-    /// 目标：cc244cf7442842e41dd4ffb0830aeb3f3() → UserInfoBean
+    /// 目标：ClientSymbols.ReadUserInfo() → UserInfoBean
     ///
     /// **注意这个 bean 用的是字段（小写），不是属性** ——
     /// nickName / userChannel / isPaidUser / usedStorageSize ...
@@ -1634,7 +1636,7 @@ public sealed class UiHook : MarshalByRefObject, IUiHook
             }
 
             var method = api.GetMethod(
-                "cc244cf7442842e41dd4ffb0830aeb3f3",
+                ClientSymbols.ReadUserInfo,
                 BindingFlags.Public | BindingFlags.Static,
                 binder: null,
                 types: Type.EmptyTypes,
@@ -1686,8 +1688,8 @@ public sealed class UiHook : MarshalByRefObject, IUiHook
     /// </summary>
     /// <remarks>
     /// 合并两个调用：
-    ///   c083e3da23c3bbf0c707145cd9efea279(SandboxIdentifier) → SyncFolderDetailBean
-    ///   c3c96725a92962d165d900554f645b220(SandboxIdentifier) → PathPermsBean { pathPerms }
+    ///   ClientSymbols.ReadSandboxDetail(SandboxIdentifier) → SyncFolderDetailBean
+    ///   ClientSymbols.ReadSandboxPermissions(SandboxIdentifier) → PathPermsBean { pathPerms }
     /// 它们要同一个入参，分开调没有意义。
     /// </remarks>
     public string ReadSyncFolderDetail(long sandboxId, long magic)
@@ -1700,7 +1702,7 @@ public sealed class UiHook : MarshalByRefObject, IUiHook
             }
 
             var api = FindClientType(CloudOpsTypeName);
-            var idType = FindClientType("Nutstore.Common.SandboxIdentifier");
+            var idType = FindClientType(ClientSymbols.SandboxIdentifierType);
 
             if (api is null || idType is null)
             {
@@ -1717,7 +1719,7 @@ public sealed class UiHook : MarshalByRefObject, IUiHook
 
             // ── 详情 ──
             var detailMethod = api.GetMethod(
-                "c083e3da23c3bbf0c707145cd9efea279",
+                ClientSymbols.ReadSandboxDetail,
                 BindingFlags.Public | BindingFlags.Static,
                 binder: null, types: new[] { idType }, modifiers: null);
 
@@ -1761,7 +1763,7 @@ public sealed class UiHook : MarshalByRefObject, IUiHook
 
             // ── 权限 ──
             var permsMethod = api.GetMethod(
-                "c3c96725a92962d165d900554f645b220",
+                ClientSymbols.ReadSandboxPermissions,
                 BindingFlags.Public | BindingFlags.Static,
                 binder: null, types: new[] { idType }, modifiers: null);
 
@@ -1823,7 +1825,7 @@ public sealed class UiHook : MarshalByRefObject, IUiHook
     /// 读某个本地文件的云端历史版本列表。只读。
     /// </summary>
     /// <remarks>
-    /// 目标：c2654043f830c74ecf5925237786dccea(NutstorePath) → List&lt;FileVersionObjectInfo&gt;
+    /// 目标：ClientSymbols.ListFileVersions(NutstorePath) → List&lt;FileVersionObjectInfo&gt;
     ///   { Version, OpType, Operation, EditorNickname, EditorAccount,
     ///     Time, FileSize, AltPath }
     ///
@@ -1852,8 +1854,8 @@ public sealed class UiHook : MarshalByRefObject, IUiHook
             }
 
             var api = FindClientType(CloudOpsTypeName);
-            var nsSandboxType = FindClientType("NutstoreClient.Common.NSSandbox");
-            var nsPathType = FindClientType("NutstoreClient.Common.NutstorePath");
+            var nsSandboxType = FindClientType(ClientSymbols.NSSandboxType);
+            var nsPathType = FindClientType(ClientSymbols.NutstorePathType);
 
             if (api is null || nsSandboxType is null || nsPathType is null)
             {
@@ -1892,7 +1894,7 @@ public sealed class UiHook : MarshalByRefObject, IUiHook
             }
 
             var method = api.GetMethod(
-                "c2654043f830c74ecf5925237786dccea",
+                ClientSymbols.ListFileVersions,
                 BindingFlags.Public | BindingFlags.Static,
                 binder: null,
                 types: new[] { nsPathType },
@@ -1982,8 +1984,8 @@ public sealed class UiHook : MarshalByRefObject, IUiHook
     {
         error = null;
 
-        var nsSandboxType = FindClientType("NutstoreClient.Common.NSSandbox");
-        var nsPathType = FindClientType("NutstoreClient.Common.NutstorePath");
+        var nsSandboxType = FindClientType(ClientSymbols.NSSandboxType);
+        var nsPathType = FindClientType(ClientSymbols.NutstorePathType);
 
         if (nsSandboxType is null || nsPathType is null)
         {
@@ -2051,7 +2053,7 @@ public sealed class UiHook : MarshalByRefObject, IUiHook
     /// 读某个本地文件在云端的分享/发布状态。只读。
     /// </summary>
     /// <remarks>
-    /// 目标：c9a9142ba46c6a4cdb6c70a448962ca9e(NutstorePath) → PublishedObjectInfo
+    /// 目标：ClientSymbols.ReadPublishInfo(NutstorePath) → PublishedObjectInfo
     ///   { Url, Version, ACL, Aclist, Groups, GroupIds, ShareOutOfTeamDisabled,
     ///     DownloadDisabled, EnableUpload, ExpireMillsSinceEpoch, Password }
     ///
@@ -2082,7 +2084,7 @@ public sealed class UiHook : MarshalByRefObject, IUiHook
 
             var nsPathType = nsPath.GetType();
             var method = api.GetMethod(
-                "c9a9142ba46c6a4cdb6c70a448962ca9e",
+                ClientSymbols.ReadPublishInfo,
                 BindingFlags.Public | BindingFlags.Static,
                 binder: null,
                 types: new[] { nsPathType },
@@ -2169,7 +2171,7 @@ public sealed class UiHook : MarshalByRefObject, IUiHook
     /// 读协作联系人列表。只读。
     /// </summary>
     /// <remarks>
-    /// 目标：c915cc8f3fd71da2191b3d1dff9bbda1f() → ContactList
+    /// 目标：ClientSymbols.ReadContacts() → ContactList
     ///   { InTeam, Invited, Others }，每项是 List&lt;Contact&gt; { NickName, Account }
     /// </remarks>
     public string ReadContacts()
@@ -2183,7 +2185,7 @@ public sealed class UiHook : MarshalByRefObject, IUiHook
             }
 
             var method = api.GetMethod(
-                "c915cc8f3fd71da2191b3d1dff9bbda1f",
+                ClientSymbols.ReadContacts,
                 BindingFlags.Public | BindingFlags.Static,
                 binder: null,
                 types: Type.EmptyTypes,
@@ -2297,7 +2299,7 @@ public sealed class UiHook : MarshalByRefObject, IUiHook
     {
         error = null;
 
-        var t = FindClientType("NutstoreClient.Common.NSSandbox");
+        var t = FindClientType(ClientSymbols.NSSandboxType);
         if (t is null)
         {
             error = "找不到 NSSandbox（版本可能变了）";
@@ -2319,7 +2321,7 @@ public sealed class UiHook : MarshalByRefObject, IUiHook
     /// 读某个本地文件在云端的对象详情。只读。
     /// </summary>
     /// <remarks>
-    /// 目标：c55ca68332481ffab4014efe97582ac93(NSSandbox, NutstorePath)
+    /// 目标：ClientSymbols.ReadObjectDetail(NSSandbox, NutstorePath)
     ///   → DownstreamObjectEntityBean { id, path(byte[]), objectType, version,
     ///     size, hash, deleted, compressible, srcMachineName, tblId }
     /// 注意这是**字段**不是属性。
@@ -2341,7 +2343,7 @@ public sealed class UiHook : MarshalByRefObject, IUiHook
             if (nsPath is null) return Json.Obj(("ok", false), ("reason", pathError));
 
             var method = api.GetMethod(
-                "c55ca68332481ffab4014efe97582ac93",
+                ClientSymbols.ReadObjectDetail,
                 BindingFlags.Public | BindingFlags.Static,
                 binder: null,
                 types: new[] { box.GetType(), nsPath.GetType() },
@@ -2399,7 +2401,7 @@ public sealed class UiHook : MarshalByRefObject, IUiHook
     /// 读某个沙箱的最新事件 ID。只读。
     /// </summary>
     /// <remarks>
-    /// 目标：cbb28d79821068cd4efb5de6f9109afff(NSSandbox) → long
+    /// 目标：ClientSymbols.ReadLatestEventId(NSSandbox) → long
     /// 实测「我的坚果云」返回一个游标值。这个值是增量同步的游标 ——
     /// 拿到它才能谈「从某个时间点之后有什么变化」。
     /// </remarks>
@@ -2418,7 +2420,7 @@ public sealed class UiHook : MarshalByRefObject, IUiHook
             if (box is null) return Json.Obj(("ok", false), ("reason", boxError));
 
             var method = api.GetMethod(
-                "cbb28d79821068cd4efb5de6f9109afff",
+                ClientSymbols.ReadLatestEventId,
                 BindingFlags.Public | BindingFlags.Static,
                 binder: null,
                 types: new[] { box.GetType() },
@@ -2483,7 +2485,7 @@ public sealed class UiHook : MarshalByRefObject, IUiHook
             if (box is null) return Json.Obj(("ok", false), ("reason", boxError));
 
             // NutstorePath.FromNutstorePath(NSSandbox, string) —— 这次是从云端路径构造
-            var nsPathType = FindClientType("NutstoreClient.Common.NutstorePath");
+            var nsPathType = FindClientType(ClientSymbols.NutstorePathType);
             var fromCloud = nsPathType?.GetMethod(
                 "FromNutstorePath", BindingFlags.Public | BindingFlags.Static,
                 binder: null, types: new[] { box.GetType(), typeof(string) }, modifiers: null);
@@ -2495,7 +2497,7 @@ public sealed class UiHook : MarshalByRefObject, IUiHook
 
             // ── 先查真实版本号 ──
             var detailMethod = api.GetMethod(
-                "c55ca68332481ffab4014efe97582ac93",
+                ClientSymbols.ReadObjectDetail,
                 BindingFlags.Public | BindingFlags.Static,
                 binder: null, types: new[] { box.GetType(), nsPathType! }, modifiers: null);
 
@@ -2510,7 +2512,7 @@ public sealed class UiHook : MarshalByRefObject, IUiHook
 
             // ── 下载 ──
             var downloadMethod = api.GetMethod(
-                "c089b7574cb46db5e6d9bba4e0e0a6002",
+                ClientSymbols.DownloadContent,
                 BindingFlags.Public | BindingFlags.Static,
                 binder: null,
                 types: new[]
@@ -2566,99 +2568,391 @@ public sealed class UiHook : MarshalByRefObject, IUiHook
     }
 
     /// <summary>
-    /// 在云端移动 / 重命名一个对象。
+    /// 在同一沙箱内移动 / 重命名一个普通文件，拒绝覆盖目标。
     /// </summary>
     /// <remarks>
-    /// 目标：ca22f644cc5eac05e5c099fb105c5b6f5(src, dest, metaUpdates)
-    ///
-    /// 前置条件（反编译确认，不满足会 CheckArgument 失败）：
-    ///   src.Sandbox == dest.Sandbox、两者都不能是根。
-    ///
-    /// 第三参数是 IEnumerable&lt;WriteMetaDataParams&gt;，移动目录时用来给后代
-    /// 更新路径。移动文件传**空集合**即可，但**不能传 null** ——
-    /// 实测传 null 抛 ArgumentNullException（目标是 GetEnumerator()）。
-    /// 空数组实现了 IEnumerable&lt;T&gt;，所以用 Array.CreateInstance 造一个。
+    /// 使用客户端文件同步处理器的 ClientSymbols.MoveFile(dest, source)。
+    /// source 的版本、大小、SHA256 必须来自真实云端元数据；写入前在默认域再次核验。
+    /// 无论调用成功或失败，都只读复查一次，不重试、不回滚。
     /// </remarks>
     public string MoveCloudObject(
         long sandboxId, long magic, string localRoot, string srcCloudPath, string destCloudPath)
     {
+        MoveContext? context = null;
+        MoveSnapshot? before = null;
+        MoveSnapshot? recheck = null;
+        var attempted = false;
+        var invokeSucceeded = false;
+        string? invocationError = null;
+        string? returnedVersion = null;
+
+        string Finish(string? reason)
+        {
+            // 只读复查也覆盖前置条件失败；尚未构造读上下文时明确标为未检查。
+            var after = context is null ? null : MoveReadSnapshot(context);
+            var sourceMissing = after is null ? (bool?)null :
+                after.Source.KnownMissing && after.SourceListed == false;
+            var targetMatched = after is null || before is null ? (bool?)null :
+                MoveMatchesFile(after.Target, before.Source, destCloudPath);
+            var verified = after is not null && MoveReadSucceeded(after) &&
+                after.TargetCollision == true && after.TargetMatchCount == 1 &&
+                sourceMissing == true && targetMatched == true;
+            var ok = attempted && invokeSucceeded && verified;
+            if (ok) reason = null;
+            else if (attempted && reason is null)
+                reason = "移动已调用，但复查未确认源消失且目标内容匹配";
+
+            return Json.Obj(
+                ("ok", ok),
+                ("attempted", attempted),
+                ("invokeSucceeded", invokeSucceeded),
+                ("domain", AppDomain.CurrentDomain.FriendlyName),
+                ("srcCloudPath", srcCloudPath),
+                ("destCloudPath", destCloudPath),
+                ("reason", reason),
+                ("invocationError", invocationError),
+                ("returnedVersion", returnedVersion),
+                ("verification", new Json.Raw(Json.Obj(
+                    ("ok", verified),
+                    ("checked", after is not null),
+                    ("sourceMissing", sourceMissing),
+                    ("targetMatched", targetMatched),
+                    ("before", before is null ? null : (object)new Json.Raw(MoveSnapshotJson(before))),
+                    ("recheck", recheck is null ? null : (object)new Json.Raw(MoveSnapshotJson(recheck))),
+                    ("after", after is null ? null : (object)new Json.Raw(MoveSnapshotJson(after)))))));
+        }
+
         try
         {
             if (sandboxId <= 0 || magic <= 0)
-                return Json.Obj(("ok", false), ("reason", "sandboxId / magic 必须为正数"));
+                return Finish("sandboxId / magic 必须为正数");
 
             if (string.IsNullOrWhiteSpace(localRoot) || !Path.IsPathRooted(localRoot))
-                return Json.Obj(("ok", false), ("reason", "localRoot 必须是绝对的本地路径"));
+                return Finish("localRoot 必须是绝对的本地路径");
 
             foreach (var (label, p) in new[] { ("srcCloudPath", srcCloudPath), ("destCloudPath", destCloudPath) })
             {
-                if (string.IsNullOrWhiteSpace(p) || !p.StartsWith("/", StringComparison.Ordinal))
-                    return Json.Obj(("ok", false), ("reason", label + " 必须以 / 开头"));
-                if (p == "/")
-                    return Json.Obj(("ok", false), ("reason", label + " 不能是根目录"));
+                var error = MoveValidateCloudPath(p);
+                if (error is not null) return Finish(label + ": " + error);
             }
 
-            if (string.Equals(srcCloudPath, destCloudPath, StringComparison.Ordinal))
-                return Json.Obj(("ok", false), ("reason", "源和目标相同，无需移动"));
+            if (string.Equals(srcCloudPath, destCloudPath, StringComparison.OrdinalIgnoreCase))
+                return Finish("源和目标相同或仅大小写不同，拒绝移动");
 
             var api = FindClientType(CloudOpsTypeName);
-            var nsPathType = FindClientType("NutstoreClient.Common.NutstorePath");
-            var metaType = FindClientType("NutstoreClient.Connection.WriteMetaDataParams");
+            var nsPathType = FindClientType(ClientSymbols.NutstorePathType);
+            var objectType = FindClientType(ClientSymbols.NutstoreObjectType);
+            var identifierType = FindClientType(ClientSymbols.SandboxIdentifierType);
 
-            if (api is null || nsPathType is null || metaType is null)
-                return Json.Obj(("ok", false), ("reason", "找不到云端操作层 / NutstorePath / WriteMetaDataParams"));
+            if (api is null || nsPathType is null || objectType is null || identifierType is null)
+                return Finish("找不到云端操作层 / NutstorePath / NutstoreObject / SandboxIdentifier");
 
             var box = BuildNSSandbox(sandboxId, magic, localRoot, out var boxError);
-            if (box is null) return Json.Obj(("ok", false), ("reason", boxError));
+            if (box is null) return Finish(boxError);
 
             var fromCloud = nsPathType.GetMethod(
                 "FromNutstorePath", BindingFlags.Public | BindingFlags.Static,
                 binder: null, types: new[] { box.GetType(), typeof(string) }, modifiers: null);
+            var toCloud = nsPathType.GetMethod("ToNutstorePath", Type.EmptyTypes);
+            var detailMethod = api.GetMethod(
+                ClientSymbols.ReadObjectDetail, BindingFlags.Public | BindingFlags.Static,
+                binder: null, types: new[] { box.GetType(), nsPathType }, modifiers: null);
+            var listMethod = api.GetMethod(
+                ClientSymbols.ListDirectory, BindingFlags.Public | BindingFlags.Static,
+                binder: null, types: new[] { identifierType, typeof(string), typeof(string) }, modifiers: null);
+            var moveMethod = api.GetMethod(
+                ClientSymbols.MoveFile, BindingFlags.Public | BindingFlags.Static,
+                binder: null, types: new[] { nsPathType, objectType }, modifiers: null);
+            var builderType = objectType.GetNestedType("Builder", BindingFlags.Public | BindingFlags.NonPublic);
+            var fileBuilder = builderType?.GetMethod(
+                "FileBuilder", BindingFlags.Public | BindingFlags.Static,
+                binder: null,
+                types: new[] { nsPathType, typeof(long), typeof(long), typeof(long), typeof(long), typeof(string) },
+                modifiers: null);
+            var build = builderType?.GetMethod("Build", BindingFlags.Public | BindingFlags.Instance,
+                binder: null, types: Type.EmptyTypes, modifiers: null);
 
-            if (fromCloud is null) return Json.Obj(("ok", false), ("reason", "找不到 NutstorePath.FromNutstorePath"));
+            if (fromCloud is null || toCloud is null || detailMethod is null || listMethod is null ||
+                moveMethod is null || fileBuilder is null || build is null)
+                return Finish("找不到文件移动所需的客户端方法（版本可能变了）");
 
+            // 同一个 NSSandbox 实例构造全部路径，文件入口本身不检查同沙箱。
             var src = fromCloud.Invoke(null, new[] { box, srcCloudPath });
             var dest = fromCloud.Invoke(null, new[] { box, destCloudPath });
+            var destParentPath = MoveParentPath(destCloudPath);
+            var destParent = fromCloud.Invoke(null, new[] { box, destParentPath });
+            var identifier = Activator.CreateInstance(identifierType, sandboxId, magic);
 
-            if (src is null || dest is null)
-                return Json.Obj(("ok", false), ("reason", "构造 NutstorePath 失败"));
+            if (src is null || dest is null || destParent is null || identifier is null)
+                return Finish("构造 NutstorePath / SandboxIdentifier 失败");
+            if (!string.Equals(toCloud.Invoke(src, null) as string, srcCloudPath, StringComparison.Ordinal) ||
+                !string.Equals(toCloud.Invoke(dest, null) as string, destCloudPath, StringComparison.Ordinal) ||
+                !string.Equals(toCloud.Invoke(destParent, null) as string, destParentPath, StringComparison.Ordinal))
+                return Finish("客户端改变了云端路径，拒绝移动");
 
-            // 空数组实现了 IEnumerable<WriteMetaDataParams> —— 移动文件够用
-            var emptyMeta = Array.CreateInstance(metaType, 0);
+            context = new MoveContext(box, identifier, src, dest, destParent,
+                srcCloudPath, destCloudPath, detailMethod, listMethod);
+            before = MoveReadSnapshot(context);
+            var preconditionError = MoveCheckPreconditions(before, srcCloudPath);
+            if (preconditionError is not null) return Finish(preconditionError);
 
-            var method = api.GetMethod(
-                "ca22f644cc5eac05e5c099fb105c5b6f5",
-                BindingFlags.Public | BindingFlags.Static,
-                binder: null,
-                types: new[] { nsPathType, nsPathType, typeof(System.Collections.Generic.IEnumerable<>)
-                    .MakeGenericType(metaType) },
-                modifiers: null);
+            // 0 时间戳沿用客户端冲突处理器的构造方式；移动请求不会发送时间戳。
+            var builder = fileBuilder.Invoke(null, new object[]
+                { src, 0L, 0L, before.Source.Size!.Value, before.Source.Version!.Value, before.Source.Hash! });
+            var sourceObject = builder is null ? null : build.Invoke(builder, null);
+            if (sourceObject is null) return Finish("构造源文件 NutstoreObject 失败");
 
-            if (method is null)
-                return Json.Obj(("ok", false), ("reason", "找不到移动方法（混淆名可能变了）"));
+            // 插件层检查后状态仍可能变化，因此临近写入再检查版本与目标碰撞。
+            recheck = MoveReadSnapshot(context);
+            preconditionError = MoveCheckPreconditions(recheck, srcCloudPath);
+            if (preconditionError is not null) return Finish("写入前复查: " + preconditionError);
+            if (recheck.Source.Version != before.Source.Version || recheck.Source.Size != before.Source.Size ||
+                !string.Equals(recheck.Source.Hash, before.Source.Hash, StringComparison.Ordinal))
+                return Finish("写入前源文件版本或内容发生变化，拒绝移动");
 
-            var results = method.Invoke(null, new[] { src, dest, emptyMeta }) as System.Collections.IEnumerable;
-
-            var moved = 0;
-            if (results is not null)
-            {
-                foreach (var _ in results) moved++;
-            }
-
-            return Json.Obj(
-                ("ok", true),
-                ("domain", AppDomain.CurrentDomain.FriendlyName),
-                ("srcCloudPath", srcCloudPath),
-                ("destCloudPath", destCloudPath),
-                ("resultCount", moved.ToString(CultureInfo.InvariantCulture)),
-                ("note", "移动已提交。最终是否生效由客户端与服务端决定 —— 用 nutstore_l3_list_cloud_dir 复查。"));
+            attempted = true;
+            var result = moveMethod.Invoke(null, new[] { dest, sourceObject });
+            var resultVersion = MoveLong(Get(result, "version"));
+            returnedVersion = resultVersion?.ToString(CultureInfo.InvariantCulture);
+            var resultPath = Get(result, "path");
+            if (resultPath is null || !nsPathType.IsInstanceOfType(resultPath) ||
+                !string.Equals(toCloud.Invoke(resultPath, null) as string, destCloudPath, StringComparison.Ordinal) ||
+                resultVersion is null || resultVersion <= 0)
+                return Finish("移动调用返回缺少有效目标路径或版本，结果未知");
+            invokeSucceeded = true;
+            return Finish(null);
         }
         catch (Exception ex)
         {
-            return Json.Obj(("ok", false), ("reason", ex.GetType().Name + ": " + ex.Message),
-                ("chain", Json.StringArray(Chain(ex))));
+            invocationError = CapabilityError(ex);
+            return Finish(invocationError);
         }
     }
+
+    private static string? MoveValidateCloudPath(string? path)
+    {
+        if (string.IsNullOrWhiteSpace(path) || !path!.StartsWith("/", StringComparison.Ordinal))
+            return "必须以 / 开头";
+        if (path == "/") return "不能是根目录";
+        try
+        {
+            if (new UTF8Encoding(false, true).GetByteCount(path) > ClientSymbols.CloudPathMaxUtf8Bytes)
+                return "路径 UTF8 长度超过客户端限制";
+        }
+        catch (EncoderFallbackException) { return "路径包含无效 Unicode 字符"; }
+        foreach (var segment in path.Substring(1).Split('/'))
+        {
+            if (segment.Length == 0 || segment == "." || segment == "..") return "包含空段或相对路径段";
+            if (segment.EndsWith(".", StringComparison.Ordinal) || segment.EndsWith(" ", StringComparison.Ordinal))
+                return "路径段不能以点或空格结尾";
+            if (segment.Any(c => char.IsControl(c) || "\\<>:\"|?*".IndexOf(c) >= 0))
+                return "包含非法路径字符";
+            var stem = segment.Split('.')[0].ToUpperInvariant();
+            if (stem == "CON" || stem == "PRN" || stem == "AUX" || stem == "NUL" ||
+                (stem.Length == 4 && (stem.StartsWith("COM", StringComparison.Ordinal) ||
+                    stem.StartsWith("LPT", StringComparison.Ordinal)) && stem[3] >= '1' && stem[3] <= '9'))
+                return "包含 Windows 保留名称";
+        }
+        return null;
+    }
+
+    private static string MoveParentPath(string path)
+    {
+        var slash = path.LastIndexOf('/');
+        return slash == 0 ? "/" : path.Substring(0, slash);
+    }
+
+    private sealed class MoveContext
+    {
+        public MoveContext(object box, object identifier, object source, object target, object targetParent,
+            string sourcePath, string targetPath, MethodInfo detailMethod, MethodInfo listMethod)
+        {
+            Box = box; Identifier = identifier; Source = source; Target = target; TargetParent = targetParent;
+            SourcePath = sourcePath; TargetPath = targetPath; DetailMethod = detailMethod; ListMethod = listMethod;
+        }
+        public object Box { get; }
+        public object Identifier { get; }
+        public object Source { get; }
+        public object Target { get; }
+        public object TargetParent { get; }
+        public string SourcePath { get; }
+        public string TargetPath { get; }
+        public MethodInfo DetailMethod { get; }
+        public MethodInfo ListMethod { get; }
+    }
+
+    private sealed class MoveObjectState
+    {
+        public bool Missing { get; set; }
+        public string? Path { get; set; }
+        public string? Type { get; set; }
+        public long? Version { get; set; }
+        public long? Size { get; set; }
+        public string? Hash { get; set; }
+        public string? Error { get; set; }
+        public bool KnownMissing => Error is null && Missing;
+    }
+
+    private sealed class MoveSnapshot
+    {
+        public MoveObjectState Source { get; set; } = new MoveObjectState();
+        public MoveObjectState Target { get; set; } = new MoveObjectState();
+        public MoveObjectState? TargetParent { get; set; }
+        public bool? SourceListed { get; set; }
+        public bool? TargetCollision { get; set; }
+        public int? TargetMatchCount { get; set; }
+        public bool? TargetParentDirectory { get; set; }
+        public string? SourceListError { get; set; }
+        public string? TargetListError { get; set; }
+    }
+
+    private static MoveSnapshot MoveReadSnapshot(MoveContext context)
+    {
+        var result = new MoveSnapshot
+        {
+            Source = MoveReadObject(context, context.Source, context.SourcePath),
+            Target = MoveReadObject(context, context.Target, context.TargetPath),
+        };
+        var sourceParent = MoveParentPath(context.SourcePath);
+        var targetParent = MoveParentPath(context.TargetPath);
+        if (targetParent == "/") result.TargetParentDirectory = true;
+        else
+        {
+            result.TargetParent = MoveReadObject(context, context.TargetParent, targetParent);
+            result.TargetParentDirectory = result.TargetParent.Error is null
+                ? !result.TargetParent.Missing && result.TargetParent.Type == "directory"
+                : (bool?)null;
+        }
+        var sourceEntries = MoveReadDirectory(context, sourceParent, out var sourceError);
+        result.SourceListError = sourceError;
+        result.SourceListed = sourceEntries is null ? (bool?)null : sourceEntries.Any(p =>
+            string.Equals(p.TrimEnd('/'), context.SourcePath, StringComparison.OrdinalIgnoreCase));
+        var targetError = sourceError;
+        var targetEntries = sourceParent == targetParent
+            ? sourceEntries : MoveReadDirectory(context, targetParent, out targetError);
+        result.TargetListError = targetError;
+        result.TargetMatchCount = targetEntries is null ? (int?)null : targetEntries.Count(p =>
+            string.Equals(p.TrimEnd('/'), context.TargetPath, StringComparison.OrdinalIgnoreCase));
+        result.TargetCollision = result.TargetMatchCount is null ? (bool?)null : result.TargetMatchCount > 0;
+        return result;
+    }
+
+    private static MoveObjectState MoveReadObject(MoveContext context, object nsPath, string expectedPath)
+    {
+        var result = new MoveObjectState();
+        try
+        {
+            var bean = context.DetailMethod.Invoke(null, new[] { context.Box, nsPath });
+            if (bean is null) { result.Missing = true; return result; }
+            if (!(Get(bean, "deleted") is bool deleted))
+                throw new CapabilityFailureException("对象缺少 deleted 元数据");
+            result.Missing = deleted;
+            if (Get(bean, "path") is byte[] bytes)
+                result.Path = new UTF8Encoding(false, true).GetString(bytes);
+            if (!string.Equals(result.Path, expectedPath, StringComparison.Ordinal))
+                throw new CapabilityFailureException("对象详情路径与请求不一致");
+            result.Type = Get(bean, "objectType") as string;
+            result.Version = MoveLong(Get(bean, "version"));
+            result.Size = MoveLong(Get(bean, "size"));
+            result.Hash = Get(bean, "hash") as string;
+        }
+        catch (Exception ex)
+        {
+            if (MoveIsObjectNotFound(ex)) result.Missing = true;
+            else result.Error = CapabilityError(ex);
+        }
+        return result;
+    }
+
+    private static List<string>? MoveReadDirectory(MoveContext context, string parent, out string? error)
+    {
+        error = null;
+        try
+        {
+            var raw = context.ListMethod.Invoke(null, new object[] { context.Identifier, parent, null! })
+                as System.Collections.IEnumerable;
+            if (raw is null) throw new CapabilityFailureException("列目录返回非集合");
+            var paths = new List<string>();
+            foreach (var item in raw)
+            {
+                if (!(item is string path)) throw new CapabilityFailureException("列目录包含非路径条目");
+                paths.Add(path);
+            }
+            return paths;
+        }
+        catch (Exception ex)
+        {
+            error = CapabilityError(ex);
+            return null;
+        }
+    }
+
+    private static bool MoveIsObjectNotFound(Exception? ex)
+    {
+        for (var depth = 0; ex is not null && depth < 8; depth++, ex = ex.InnerException)
+        {
+            if (ex.GetType().FullName == "NutstoreClient.Connection.RequestException" &&
+                string.Equals(Get(ex, "ErrorCode") as string, "ObjectNotFound", StringComparison.Ordinal))
+                return true;
+        }
+        return false;
+    }
+
+    private static long? MoveLong(object? value) => value is not null &&
+        long.TryParse(value.ToString(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var number)
+        ? number : (long?)null;
+
+    private static bool MoveValidHash(string? hash)
+    {
+        if (string.IsNullOrEmpty(hash)) return false;
+        try { return Convert.FromBase64String(hash).Length == 32; }
+        catch (FormatException) { return false; }
+    }
+
+    private static string? MoveCheckPreconditions(MoveSnapshot snapshot, string sourcePath)
+    {
+        var source = snapshot.Source;
+        if (source.Error is not null || snapshot.SourceListed is null ||
+            snapshot.TargetCollision is null || snapshot.Target.Error is not null ||
+            snapshot.TargetParentDirectory is null)
+            return "云端读取不完整，拒绝移动；详见 verification";
+        if (source.Missing || snapshot.SourceListed != true) return "源文件不存在";
+        if (source.Type != "file") return "仅支持普通文件，拒绝目录或其他对象";
+        if (!string.Equals(source.Path, sourcePath, StringComparison.Ordinal) ||
+            source.Version is null || source.Version <= 0 || source.Version == long.MaxValue ||
+            source.Size is null || source.Size < 0 || !MoveValidHash(source.Hash))
+            return "源文件元数据无效，拒绝移动";
+        if (snapshot.TargetParentDirectory != true) return "目标父目录不存在或不是目录";
+        if (snapshot.TargetCollision == true || !snapshot.Target.KnownMissing)
+            return "目标已存在或存在大小写碰撞，拒绝覆盖";
+        return null;
+    }
+
+    private static bool MoveMatchesFile(MoveObjectState target, MoveObjectState source, string targetPath) =>
+        target.Error is null && !target.Missing && target.Type == "file" &&
+        string.Equals(target.Path, targetPath, StringComparison.Ordinal) && source.Size is not null &&
+        target.Size == source.Size && MoveValidHash(source.Hash) &&
+        string.Equals(target.Hash, source.Hash, StringComparison.Ordinal);
+
+    private static bool MoveReadSucceeded(MoveSnapshot snapshot) =>
+        snapshot.Source.Error is null && snapshot.Target.Error is null &&
+        snapshot.TargetParent?.Error is null && snapshot.SourceListError is null &&
+        snapshot.TargetListError is null && snapshot.SourceListed is not null &&
+        snapshot.TargetCollision is not null && snapshot.TargetParentDirectory == true;
+
+    private static string MoveSnapshotJson(MoveSnapshot snapshot) => Json.Obj(
+        ("source", new Json.Raw(MoveObjectJson(snapshot.Source))),
+        ("target", new Json.Raw(MoveObjectJson(snapshot.Target))),
+        ("targetParent", snapshot.TargetParent is null ? null : (object)new Json.Raw(MoveObjectJson(snapshot.TargetParent))),
+        ("sourceListed", snapshot.SourceListed), ("targetCollision", snapshot.TargetCollision),
+        ("targetMatchCount", snapshot.TargetMatchCount),
+        ("targetParentDirectory", snapshot.TargetParentDirectory),
+        ("sourceListError", snapshot.SourceListError), ("targetListError", snapshot.TargetListError));
+
+    private static string MoveObjectJson(MoveObjectState state) => Json.Obj(
+        ("missing", state.Error is null ? (object)state.Missing : null), ("path", state.Path),
+        ("objectType", state.Type), ("version", state.Version?.ToString(CultureInfo.InvariantCulture)),
+        ("sizeBytes", state.Size?.ToString(CultureInfo.InvariantCulture)), ("hash", state.Hash), ("error", state.Error));
 
     private static string BoolText(object? v) => (v as bool? ?? false) ? "true" : "false";
 

@@ -8,8 +8,9 @@
     2. 实测：从工作区目录启动/加载的进程在访问 HttpListener 时会被限制，
        放到 %LOCALAPPDATA% 下才稳定。
 
-  所以：真正跑的是 %LOCALAPPDATA%\NutstoreMcp\plugin\，
-  这个脚本负责把它从项目目录同步过去。改完代码跑一次即可，不需要管理员。
+  所以：真正跑的是 %LOCALAPPDATA%\NutstoreMcp\plugin-<时间戳>\，
+  这个脚本负责把它从项目目录同步过去，并把 bridge.ini 的 home 指过去。
+  改完代码跑一次即可，不需要管理员。
 
 .EXAMPLE
   .\deploy\build.ps1
@@ -74,6 +75,9 @@ function Get-ContractApi {
     }
 }
 $root = Split-Path $PSScriptRoot -Parent
+
+# 在修改任何部署文件前核对客户端私有绑定。
+& (Join-Path $PSScriptRoot 'check-client-bindings.ps1')
 
 function Step($text) { Write-Host "  $text" -ForegroundColor Cyan }
 function Ok($text) { Write-Host "  ✅ $text" -ForegroundColor Green }

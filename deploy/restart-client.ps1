@@ -22,6 +22,11 @@ $ErrorActionPreference = 'Stop'
 
 . "$PSScriptRoot\_client.ps1"
 
+# 在停止运行中的客户端前拒绝不匹配的私有绑定。
+if (-not $SkipInstall) {
+    & (Join-Path $PSScriptRoot 'check-client-bindings.ps1')
+}
+
 Write-Host '── 1/3 停止坚果云 ─────────────────────────────────' -ForegroundColor Cyan
 
 # 必须先停守护进程。
@@ -72,7 +77,7 @@ if (-not $SkipInstall) {
                 # 这些是插件目录当前契约里的方法名，全部出现才算装好。
                 # **每次加新的钩子方法都要同步更新这里** —— 否则轮询会拿旧契约
                 # 立刻通过，然后在客户端启动之后才发现调用失败。
-                $required = @('ReadClientSettings', 'WriteClientSetting', 'SearchCloud', 'ReadAccountUsage', 'ReadUserInfo', 'ReadSyncFolderDetail', 'ListFileVersions', 'ReadShareInfo', 'ReadContacts', 'InvokeBridge', 'ReadObjectDetail', 'ReadLatestEventId', 'DownloadCloudFile', 'MoveCloudObject')
+                $required = @('ReadClientSettings', 'WriteClientSetting', 'SearchCloud', 'ReadAccountUsage', 'ReadUserInfo', 'ReadSyncFolderDetail', 'ListFileVersions', 'ReadShareInfo', 'ReadContacts', 'InvokeBridge', 'ReadObjectDetail', 'ReadLatestEventId', 'DownloadCloudFile', 'MoveCloudObject', 'CreateCloudDirectory', 'ReadPathAcl')
                 $missing = @($required | Where-Object { -not $text.Contains($_) })
 
                 if ($missing.Count -eq 0) {

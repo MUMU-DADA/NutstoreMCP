@@ -1,3 +1,4 @@
+// 读取坚果云本地数据库信息。
 using System.Globalization;
 using System.Text.Json;
 using Microsoft.Data.Sqlite;
@@ -132,16 +133,15 @@ public sealed class LocalNutstoreData : IDisposable
 
     /// <summary>
     /// 同步错误原因码 → 符号名。
-    /// 这些符号名来自客户端程序集里的常量（<c>SYNC_ERROR_REASON_*</c>），
-    /// 但**数值映射未经官方确认** —— 所以输出里保留原始 code，符号名标注为推测。
+    /// 数值映射已核对客户端 7.2.12 的 SyncErrorReason，保留原始 code 供升级后复核。
     /// </summary>
     private static readonly Dictionary<long, string> SyncErrorReasonHints = new()
     {
-        [0] = "UNKNOWN",
-        [1] = "LIMIT_UPLOAD_SIZE",
-        [2] = "MAYBE_VIRUS",
-        [3] = "RESERVED_NAME",
-        [4] = "SPECIAL_CHARACTER",
+        [NutstoreMcp.ClientBindings.ClientSymbols.SyncErrorUnknown] = "UNKNOWN",
+        [NutstoreMcp.ClientBindings.ClientSymbols.SyncErrorFileSizeLimit] = "LIMIT_UPLOAD_SIZE",
+        [NutstoreMcp.ClientBindings.ClientSymbols.SyncErrorPotentialMalware] = "MAYBE_VIRUS",
+        [NutstoreMcp.ClientBindings.ClientSymbols.SyncErrorIllegalPathCharacters] = "SPECIAL_CHARACTER",
+        [NutstoreMcp.ClientBindings.ClientSymbols.SyncErrorWindowsReservedNames] = "RESERVED_NAME",
     };
 
     /// <summary>.NET DateTime ticks（0001 纪元）→ Unix 纪元的毫秒偏移。</summary>
@@ -834,7 +834,8 @@ public sealed class LocalNutstoreData : IDisposable
         return new SyncErrorsResult(
             errors.Count,
             errors,
-            "reasonName 是根据客户端常量符号推测的，数值映射未经官方确认；请以 reasonCode 为准。");
+            "reasonName 数值映射已核对客户端 " + NutstoreMcp.ClientBindings.ClientSymbols.VerifiedClientVersion
+            + " 的枚举；其他版本仍需兼容性检查，请保留 reasonCode。");
     }
 
     /// <summary>查询单个云端路径的同步状态。</summary>

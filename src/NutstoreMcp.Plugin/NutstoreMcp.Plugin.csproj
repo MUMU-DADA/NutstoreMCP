@@ -38,4 +38,7 @@
        转发给默认域里跑的 NutstoreMcp.UiHook。
        少一个引用就少一份在子域里加载失败的可能。 -->
 
+  <ItemGroup>
+    <Compile Include="..\NutstoreMcp.ClientBindings\ClientSymbols.cs" Link="ClientBindings\ClientSymbols.cs" />
+  </ItemGroup>
 </Project>

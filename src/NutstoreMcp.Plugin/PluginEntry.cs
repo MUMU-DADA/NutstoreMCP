@@ -10,19 +10,7 @@ using NutstoreMcp.Plugin.Transport;
 
 namespace NutstoreMcp.Plugin;
 
-/// <summary>
-/// 插件入口。程序目录里的桥和本地测试宿主都只认这一对方法。
-///
-/// <para>
-/// <b>契约刻意做到最窄</b>：只有 <see cref="Start(string)"/> 和 <see cref="Stop"/>，
-/// 参数只有「插件目录」。桥装在 <c>C:\Program Files</c> 里、改动要提权，
-/// 而插件主体在项目目录里天天重编 —— 契约窄才能保证桥常年不用动。
-/// </para>
-/// <para>
-/// 所有异常都在这里兜住：这是跑在用户同步客户端进程里的代码，
-/// 任何逃逸的异常都可能影响同步。
-/// </para>
-/// </summary>
+/// <summary>管理插件启动、配置和 MCP 服务。</summary>
 public static class PluginEntry
 {
     private static readonly object Gate = new();
@@ -369,7 +357,7 @@ public static class PluginEntry
             {
                 options.ServerInfo = new() { Name = "nutstore-mcp", Version = Version };
                 options.ServerInstructions =
-                    "坚果云客户端内置的 MCP 服务器。当前为只读模式：不会同步文件、不会改动远程内容。";
+                    "坚果云客户端内置的 MCP 服务器。查询可直接使用；专用写工具默认只预演，" + "执行需要写入解锁、confirm=true、dryRun=false。移动只支持普通文件，已有目标拒绝覆盖。" + "通用桥用于开发诊断，脚本可能修改状态，删除入口禁止调用。";
             })
             .WithStreamServerTransport(http.SdkInput, http.SdkOutput)
             .WithTools<PluginTools>();

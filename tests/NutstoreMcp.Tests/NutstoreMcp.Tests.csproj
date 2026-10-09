@@ -45,6 +45,8 @@
     <Compile Include="..\..\src\NutstoreMcp.Plugin\L3\CloudFolderName.cs" Link="L3\CloudFolderName.cs" />
     <Compile Include="..\..\src\NutstoreMcp.Plugin\L3\SettableSettings.cs" Link="L3\SettableSettings.cs" />
     <Compile Include="..\..\src\NutstoreMcp.Plugin\L3\ClientCallSites.cs" Link="L3\ClientCallSites.cs" />
+    <Compile Include="..\..\src\NutstoreMcp.Plugin\L3\CloudObjectPath.cs" Link="L3\CloudObjectPath.cs" />
+    <Compile Include="..\..\src\NutstoreMcp.Plugin\L3\CloudWriteOperations.cs" Link="L3\CloudWriteOperations.cs" />
   </ItemGroup>
 
 </Project>

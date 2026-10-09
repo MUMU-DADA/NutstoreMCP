@@ -7,15 +7,18 @@ C:\Program Files\Nutstore\bin-7.2.12\
     NutstoreClient.exe.config          ← 打补丁（加两行 appDomainManager 配置）
     NutstoreMcp.Bridge.dll             ← 新增，9.5 KB，零依赖
     NutstoreMcp.Plugin.Contract.dll    ← 新增，5.5 KB，跨 AppDomain 的唯一契约
+    NutstoreMcp.UiHook.dll             ← 默认域钩子，执行客户端实现
 
 %LOCALAPPDATA%\NutstoreMcp\
     bridge.ini                         ← 桥读它，指向插件目录（用户可写，改它不用提权）
-    plugin\                            ← 插件主体，天天重编的就是这里
+    plugin-<时间戳>\                  ← 每次构建的插件版本目录
     logs\bridge.log                    ← 桥的日志
+    logs\plugin.log                    ← 插件的日志（刻意放共享位置，不跟着版本目录被清掉）
 ```
 
-**程序目录只放三个文件，装一次之后基本不用再动。** 插件主体在 `%LOCALAPPDATA%`
-下，改代码 → `.\deploy\build.ps1` → 重启客户端即可，全程不需要管理员。
+插件主体在 `%LOCALAPPDATA%` 下，改代码 → `.\deploy\build.ps1` 即热重载，
+不用重启客户端或提权。修改默认域钩子或契约后，先跑 `.\verify.ps1`，
+再用 `.\deploy\restart-client.ps1` 合并一次停止、安装与启动。
 
 ## 安装
 
@@ -41,7 +44,7 @@ C:\Program Files\Nutstore\bin-7.2.12\
 
 ```powershell
 Get-Content "$env:LOCALAPPDATA\NutstoreMcp\logs\bridge.log" -Tail 20
-Get-Content "$env:LOCALAPPDATA\NutstoreMcp\plugin\logs\plugin.log" -Tail 20
+Get-Content "$env:LOCALAPPDATA\NutstoreMcp\logs\plugin.log" -Tail 20
 ```
 
 健康时应该看到：
@@ -96,7 +99,7 @@ enabled=false
 .\deploy\install.ps1 -Uninstall
 ```
 
-同样会自动提权。它会删除两个 DLL 并**从备份还原客户端配置**。备份是安装时自动建的
+同样会自动提权。它会清理部署 DLL 并**从备份还原客户端配置**。备份是安装时自动建的
 （`NutstoreClient.exe.config.nutstore-mcp-backup`），只备份一次，不会被后续安装覆盖。
 
 ## 出问题怎么办
@@ -124,9 +127,9 @@ enabled=false
 
 ## 已知限制
 
-- **客户端升级会换目录**（`bin-7.2.12` 这种带版本号的命名说明升级会新建目录），
-  桥会被丢弃。升级后重跑 `.\deploy\install.ps1` 即可。
-  `install.ps1` 每次都会重新定位 `NutstoreClient.exe`，不用手改路径。
+- **客户端升级会换目录和私有实现**。先运行 `.\deploy\check-client-bindings.ps1`，
+  完整复核符号、签名、枚举与实现差异，更新版本登记和新基线后再构建、安装。
+  部署脚本自动定位最新目录，并在写文件或停止客户端前拒绝不匹配的绑定；卸载不受限制。
 - 端口 17321 可在 `plugin.json` 里改（放在插件目录下）。
 - 桥只绑 `127.0.0.1`，外部访问不到 —— 这个端点能读坚果云的本地状态。
 

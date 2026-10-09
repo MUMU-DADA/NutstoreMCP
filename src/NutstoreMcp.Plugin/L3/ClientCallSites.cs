@@ -1,17 +1,8 @@
+// 登记客户端调用目的及副作用。
+using NutstoreMcp.ClientBindings;
 namespace NutstoreMcp.Plugin.L3;
 
-/// <summary>
-/// 我们**有意调用**的客户端方法清单 —— 包括混淆过的（名字是哈希的）那些。
-/// </summary>
-/// <remarks>
-/// 存在的理由：<see cref="ForbiddenClientMethods"/> 是**按名字**匹配的，
-/// 而客户端里真正做事的类被混淆过，方法名是哈希。名字匹配对它们完全无效 ——
-/// 也就是说那份禁止清单**挡不住**一个哈希调用。
-///
-/// 所以改用另一条防线：凡是调用混淆方法，必须在这里登记。
-/// 登记不是形式 —— 每一条都要写清楚「调它会不会改动状态」和「为什么安全」。
-/// 新增一个哈希调用而没在这里登记，就是一次需要被审查的改动。
-/// </remarks>
+/// <summary>登记客户端调用点及其副作用。</summary>
 internal static class ClientCallSites
 {
     /// <summary>一个混淆调用点。</summary>
@@ -28,13 +19,13 @@ internal static class ClientCallSites
         string Why);
 
     /// <summary>客户端云端操作层的混淆类。多个调用点都在它上面。</summary>
-    public const string CloudOpsType = "A.c3795a089d76f103f11c4fe70f38ac8ca";
+    public const string CloudOpsType = ClientSymbols.CloudOpsType;
 
     public static readonly IReadOnlyList<CallSite> Registered =
     [
         new(
             CloudOpsType,
-            "ccdd0d7373903386c87fb2d3077bf8ced",
+            ClientSymbols.CreateSandbox,
             "新建云端同步文件夹（CreateCloudSyncFolder）",
             Mutates: true,
             Why: "只在云端**新增**一个沙箱，不删不改任何已有内容；"
@@ -43,7 +34,7 @@ internal static class ClientCallSites
 
         new(
             CloudOpsType,
-            "c05097d346f069f32352068d6ff359701",
+            ClientSymbols.ListDirectory,
             "列出云端目录（ListCloudDirectory）",
             Mutates: false,
             Why: "纯读。目标方法只发一次列表请求并把结果映射成路径字符串。"),
@@ -51,7 +42,7 @@ internal static class ClientCallSites
         // 下面两个是**目标方法内部**调用的，我们从不直接调，
         // 登记它们是为了记录「读这些方法的实现时确认过它们做什么」。
         new(
-            "NutstoreClient.DAO.NSSandboxDAO",
+            ClientSymbols.SandboxDaoType,
             "InitSandbox",
             "把沙箱的本地存储初始化到指定目录（BindSandbox 用它）",
             Mutates: true,
@@ -60,85 +51,86 @@ internal static class ClientCallSites
 
         new(
             CloudOpsType,
-            "cfd1df8451110086567f3d56edf4697e8",
-            "在沙箱内建子目录（**当前未使用**）",
+            ClientSymbols.CreateDirectory,
+            "在沙箱内建子目录（CreateCloudDirectory）",
             Mutates: true,
-            Why: "已定位但没接出来。登记在这里是为了说明：以后要用它，"
-               + "必须重新走一遍「确认它改什么」的流程，不能因为它已在清单里就直接调。"),
+            Why: "只新建一个云端目录，不递归、不覆盖已有对象。"
+               + "解锁令牌 + confirm + dryRun 默认真；实际查父目录和目标，失败也复查。"
+               + "本轮新靶子验证已有文件会返回 DuplicateName 且文件大小、哈希和版本不变。"),
 
         new(
             CloudOpsType,
-            "c7a517b89b338a47fe91fa3ec2a0823c3",
+            ClientSymbols.Search,
             "在云端按关键词搜索（SearchCloud）",
             Mutates: false,
             Why: "纯读。只发一次搜索请求，把结果映射成路径字符串。"),
 
         new(
             CloudOpsType,
-            "cf22046b2931cec246e3a4f4b994e6c84",
+            ClientSymbols.ReadUsage,
             "读账号容量与流量用量（ReadAccountUsage）",
             Mutates: false,
             Why: "纯读。不带参数，只取账号的容量与流量统计，不写任何东西。"),
 
         new(
             CloudOpsType,
-            "cc244cf7442842e41dd4ffb0830aeb3f3",
+            ClientSymbols.ReadUserInfo,
             "读账号信息（ReadUserInfo）",
             Mutates: false,
             Why: "纯读。不带参数，只取账号的昵称与类型，不写任何东西。"),
 
         new(
             CloudOpsType,
-            "c083e3da23c3bbf0c707145cd9efea279",
+            ClientSymbols.ReadSandboxDetail,
             "读同步文件夹详情（ReadSyncFolderDetail）",
             Mutates: false,
             Why: "纯读。只按 SandboxIdentifier 查询该沙箱的名称、所有者与占用，不写任何东西。"),
 
         new(
             CloudOpsType,
-            "c3c96725a92962d165d900554f645b220",
+            ClientSymbols.ReadSandboxPermissions,
             "读沙箱权限（ReadSyncFolderDetail）",
             Mutates: false,
             Why: "纯读。只按 SandboxIdentifier 查询各路径的权限位，不写任何东西。"),
 
         new(
             CloudOpsType,
-            "c2654043f830c74ecf5925237786dccea",
+            ClientSymbols.ListFileVersions,
             "读文件历史版本（ListFileVersions）",
             Mutates: false,
             Why: "纯读。只按 NutstorePath 查询该文件的版本列表，不恢复、不修改任何版本。"),
 
         new(
             CloudOpsType,
-            "c9a9142ba46c6a4cdb6c70a448962ca9e",
+            ClientSymbols.ReadPublishInfo,
             "读文件分享状态（ReadShareInfo）",
             Mutates: false,
             Why: "纯读。只按 NutstorePath 查询该对象的分享信息，不创建、不修改任何分享。"),
 
         new(
             CloudOpsType,
-            "c915cc8f3fd71da2191b3d1dff9bbda1f",
+            ClientSymbols.ReadContacts,
             "读协作联系人（ReadContacts）",
             Mutates: false,
             Why: "纯读。不带参数，只取联系人列表，不邀请、不写任何东西。"),
 
         new(
             CloudOpsType,
-            "c55ca68332481ffab4014efe97582ac93",
+            ClientSymbols.ReadObjectDetail,
             "读对象详情（ReadObjectDetail）",
             Mutates: false,
             Why: "纯读。只按 NSSandbox + NutstorePath 查询该对象的元数据，不写任何东西。"),
 
         new(
             CloudOpsType,
-            "cbb28d79821068cd4efb5de6f9109afff",
+            ClientSymbols.ReadLatestEventId,
             "读最新事件 ID（ReadLatestEventId）",
             Mutates: false,
             Why: "纯读。只按 NSSandbox 查询当前同步游标，不推进游标、不写任何东西。"),
 
         new(
             CloudOpsType,
-            "c089b7574cb46db5e6d9bba4e0e0a6002",
+            ClientSymbols.DownloadContent,
             "下载云端文件内容（DownloadCloudFile）",
             Mutates: true,
             Why: "云端只读，但**会写本地磁盘** —— 所以标为会改状态。"
@@ -148,18 +140,25 @@ internal static class ClientCallSites
 
         new(
             CloudOpsType,
-            "ca22f644cc5eac05e5c099fb105c5b6f5",
-            "在云端移动 / 重命名（MoveCloudObject）",
+            ClientSymbols.MoveFile,
+            "在云端移动 / 重命名普通文件（MoveCloudObject）",
             Mutates: true,
-            Why: "**会改云端** —— 这是第一个真正修改云端的能力。"
-               + "守卫：解锁令牌 + confirm + dryRun 默认真；执行前实际列出云端目录，"
-               + "核对源存在、目标不存在（只做重命名语义，绝不覆盖）；"
-               + "客户端自身还要求同沙箱、非根。"
-               + "实测传给第三参数 null 会抛 ArgumentNullException 且**移动不会发生**，"
-               + "所以用空数组（实现 IEnumerable<T>）。"),
+            Why: "会改云端路径，不改文件内容；仅同沙箱普通文件。"
+               + "三重守卫，实际核对两父目录、源对象版本和目标不存在，执行后核对大小、哈希。"
+               + "本轮新靶子验证已有目标返回 DuplicateName/Conflict，两对象不变；"
+               + "失败和未知结果不自动重试，不删除或覆盖冲突目标。"
+               + "原 ca22 方法是目录批量接口，空集合违反 Any() 前置条件，已停止调用。"),
 
         new(
-            "NutstoreClient.Common.NutstorePath",
+            CloudOpsType,
+            ClientSymbols.ReadPathAcl,
+            "读子路径权限和继承状态（ReadPathAcl）",
+            Mutates: false,
+            Why: "纯读。只发 MakeGetPathAclRequest，不调用 ACL 修改方法；"
+               + "显式输出权限、用户与组字段并限制数量，不序列化会话或整个对象。"),
+
+        new(
+            ClientSymbols.NutstorePathType,
             "FromNutstorePath",
             "由云端路径构造 NutstorePath（DownloadCloudFile 的前置）",
             Mutates: false,
@@ -175,7 +174,7 @@ internal static class ClientCallSites
                + "危险方法名一律拒绝。写操作的策略（解锁、dryRun、白名单）仍在插件侧。"),
 
         new(
-            "NutstoreClient.Common.NutstorePath",
+            ClientSymbols.NutstorePathType,
             "FromAbsolutePath",
             "由本地绝对路径构造 NutstorePath（ListFileVersions 的前置）",
             Mutates: false,

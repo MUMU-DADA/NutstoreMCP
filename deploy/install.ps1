@@ -133,6 +133,10 @@ if (-not (Test-Admin) -and -not $WhatIfPreference) {
 }
 
 # ── 客户端必须先关掉 ──
+if (-not $Uninstall) {
+    & (Join-Path $PSScriptRoot 'check-client-bindings.ps1') -ClientDir $ClientDir
+}
+
 # 桥 DLL 被运行中的客户端加载着，文件是锁的，Copy-Item 会失败。
 # 而且改配置也要等重启才生效 —— 与其拷到一半失败留下不一致状态，不如直接说清楚。
 if (-not $WhatIfPreference) {

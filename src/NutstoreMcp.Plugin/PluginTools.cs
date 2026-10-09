@@ -1,3 +1,5 @@
+// 提供客户端 MCP 工具。
+using NutstoreMcp.ClientBindings;
 using System.ComponentModel;
 using System.Diagnostics;
 using System.Text.Json;
@@ -6,31 +8,15 @@ using NutstoreMcp.Plugin.Contract;
 
 namespace NutstoreMcp.Plugin;
 
-/// <summary>
-/// 插件工具集。
-///
-/// <para>
-/// <b>当前阶段硬性只读</b>：不动本地文件、不同步、绝不改远程内容。
-/// 开发期的不确定性不该有机会影响到用户的同步数据。
-/// 所有工具一律 <c>ReadOnly = true, Destructive = false</c>。
-/// </para>
-/// <para>
-/// 这里刻意只放「只有进程内才能拿到」的信息。能用 WebDAV 或本地库拿到的能力
-/// 仍由独立的 MCP 服务器负责，两边不重复。
-/// </para>
-/// <para>
-/// 界面相关的工具全部经 <see cref="IUiHook"/> 转发到客户端默认域执行 ——
-/// 插件自己在子域里，碰不到 WPF。
-/// </para>
-/// </summary>
+/// <summary>向 MCP 提供坚果云客户端能力。</summary>
 [McpServerToolType]
-public sealed class PluginTools
+public sealed partial class PluginTools
 {
     private const string UiUnavailable =
         "{\"available\": false, \"reason\": \"UI 钩子未接入（桥没能在客户端默认域里加载 NutstoreMcp.UiHook.dll）\"}";
 
     [McpServerTool(Name = "nutstore_l3_create_sync_folder", ReadOnly = false, Destructive = false, Idempotent = true, OpenWorld = false)]
-    [Description("【默认只预演】把本地空目录绑定为坚果云同步文件夹。这是 L3 唯一可能丢数据的操作，因此放行条件极严：需要环境变量 NUTSTORE_L3_WRITE=1、confirm=true、dryRun=false，且本地目录必须为空、不与现有同步根重叠。任何一条不满足都拒绝执行。**当前执行通道未接通**，即使在满足全部条件时也只返回判定结果。")]
+    [Description("【默认只预演】把本地空目录绑定为坚果云同步文件夹。需要内容为 yes 的 l3-write.enabled 令牌、confirm=true、dryRun=false；本地目录必须为空、不与现有同步根重叠，沙箱必须尚未绑定且身份与权限已确认。")]
     public static string L3CreateSyncFolder(
         [Description("要绑定的本地目录（必须已存在且为空）")] string localPath,
         [Description("要绑定的云端沙箱 ID（必须 >0）。用 nutstore_sync_folders 查未绑定的沙箱")] long sandboxId = 0,
@@ -169,7 +155,7 @@ public sealed class PluginTools
                 executionResult,
                 executionUnavailableReason = executionAvailable
                     ? null
-                    : "尚未执行。需要：环境变量 NUTSTORE_L3_WRITE=1 + confirm=true + dryRun=false，"
+                    : "尚未执行。需要：内容为 yes 的 l3-write.enabled 令牌 + confirm=true + dryRun=false，"
                       + "且默认域钩子已更新（需重启客户端一次）。",
             }, Indented);
         }
@@ -208,7 +194,7 @@ public sealed class PluginTools
     }
 
     [McpServerTool(Name = "nutstore_l3_sync_folders", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
-    [Description("用坚果云客户端自己的 DAO 读取所有同步文件夹绑定（沙箱 ID、云端名、本地路径、是否占位符）。数据来自客户端模型而非猜表结构，客户端升级后更不容易失准。**读的是数据库副本，真实数据库不会被打开**。")]
+    [Description("读取客户端登记的所有同步文件夹绑定：沙箱 ID、云端名、本地路径和占位符状态。只读，优先从运行中的客户端获取。")]
     public static string L3SyncFolders()
     {
         // 优先走默认域：客户端那些静态初始化依赖 Assembly.GetEntryAssembly()，
@@ -309,7 +295,7 @@ public sealed class PluginTools
                     try
                     {
                         result = ui.CreateCloudSyncFolder(name, description ?? string.Empty);
-                        executed = true;
+                        executed = ClientSucceeded(result, refusals);
                     }
                     catch (Exception ex)
                     {
@@ -472,7 +458,7 @@ public sealed class PluginTools
                     try
                     {
                         result = ui.WriteClientSetting(name, value);
-                        executed = true;
+                        executed = ClientSucceeded(result, refusals);
                     }
                     catch (Exception ex)
                     {
@@ -885,7 +871,7 @@ public sealed class PluginTools
     }
     [McpServerTool(Name = "nutstore_bridge", ReadOnly = false, Destructive = false, Idempotent = false, OpenWorld = true)]
     [Description("通用反射桥：按脚本调用客户端的实现。**加这个是为了不再为每一个新能力重启客户端**。脚本一行一个操作，行号即槽位号（从 0 开始），后续行可用 #N 引用前面的结果。支持 NEW（构造）/ CALL（静态调用）/ INSTANCE（实例调用）/ GET（取成员）/ CHAIN（沿成员链取）/ ENUM。参数编码：s:<base64> 字符串、l:<数字> long、i:<数字> int、b:true/false 布尔、#<槽位> 引用、- null、无前缀按字符串。桥内部限制：只能操作客户端自己的程序集、危险方法名一律拒绝。")]
-    public static string Bridge([Description("脚本，例如：CALL|A.c3795a08....|c915cc8f3fd71da2191b3d1dff9bbda1f")] string script)
+    public static string Bridge([Description("脚本格式：CALL|<客户端类型全名>|<方法名>|参数...")] string script)
     {
         var ui = PluginEntry.Ui;
         if (ui is null)
@@ -1051,7 +1037,7 @@ public sealed class PluginTools
                 try
                 {
                     result = ui.DownloadCloudFile(sandboxId, magic, root!, cloudPath, destPath);
-                    executed = true;
+                    executed = ClientSucceeded(result, refusals);
                 }
                 catch (Exception ex)
                 {
@@ -1072,123 +1058,6 @@ public sealed class PluginTools
                     "只写本地磁盘，云端不做任何修改。",
                     "目标已存在一律拒绝 —— 这是本操作唯一可能造成数据丢失的地方。",
                     "写入用 FileMode.CreateNew：即使判断和写入之间被人抢先建了文件，也不会覆盖。",
-                },
-                executed,
-                result,
-            }, Indented);
-        }
-        catch (Exception ex)
-        {
-            return Error(ex);
-        }
-    }
-    [McpServerTool(Name = "nutstore_l3_move", ReadOnly = false, Destructive = false, Idempotent = false, OpenWorld = true)]
-    [Description("【默认只预演】**改云端**：在同一个同步文件夹内移动或重命名一个对象。守卫：解锁令牌 + confirm=true + dryRun=false，且**目标已存在一律拒绝**（绝不覆盖）。执行前会自动核对源存在、目标不存在。")]
-    public static string L3Move(
-        [Description("沙箱 ID")] long sandboxId,
-        [Description("沙箱的内部标识（magic）")] long magic,
-        [Description("源云端路径，必须以 / 开头")] string srcCloudPath,
-        [Description("目标云端路径，必须以 / 开头，且不能已存在")] string destCloudPath,
-        [Description("必须显式传 true 才可能执行")] bool confirm = false,
-        [Description("默认 true（只预演不执行）")] bool dryRun = true)
-    {
-        var ui = PluginEntry.Ui;
-        if (ui is null) return UiUnavailable;
-
-        try
-        {
-            var refusals = new List<string>();
-            var unlocked = PluginEntry.IsWriteUnlocked();
-
-            if (!unlocked)
-                refusals.Add("未解锁。把内容为 yes 的令牌文件放到 %LOCALAPPDATA%\\NutstoreMcp\\l3-write.enabled。");
-
-            if (!confirm) refusals.Add("调用方没有传 confirm=true。");
-
-            foreach (var (label, p) in new[] { ("srcCloudPath", srcCloudPath), ("destCloudPath", destCloudPath) })
-            {
-                if (string.IsNullOrWhiteSpace(p) || !p.StartsWith("/", StringComparison.Ordinal))
-                    refusals.Add(label + " 必须以 / 开头。");
-                else if (p == "/")
-                    refusals.Add(label + " 不能是根目录。");
-            }
-
-            if (string.Equals(srcCloudPath, destCloudPath, StringComparison.Ordinal))
-                refusals.Add("源和目标相同。");
-
-            // 沙箱身份检查（localRoot 要给它）+ 源/目标的实际存在性核对
-            string? root = null;
-            using (var doc = JsonDocument.Parse(ui.ReadClientSyncFolders()))
-            {
-                if (doc.RootElement.TryGetProperty("sandboxes", out var list))
-                {
-                    foreach (var s in list.EnumerateArray())
-                    {
-                        var id = s.TryGetProperty("id", out var i) && long.TryParse(i.GetString(), out var pid) ? pid : 0;
-                        if (id == sandboxId)
-                        {
-                            root = s.TryGetProperty("localPath", out var lp) ? lp.GetString() : null;
-                            break;
-                        }
-                    }
-                }
-            }
-
-            if (string.IsNullOrWhiteSpace(root))
-                refusals.Add($"沙箱 {sandboxId} 没有本地路径 —— 移动需要该沙箱已绑定到本地。");
-
-            // 源必须存在、目标必须不存在 —— 这是「绝不覆盖」的实际依据
-            if (refusals.Count == 0)
-            {
-                var listing = ui.ListCloudDirectory(sandboxId, magic, "/");
-                using var doc = JsonDocument.Parse(listing);
-
-                if (doc.RootElement.TryGetProperty("entries", out var entries))
-                {
-                    var all = entries.EnumerateArray().Select(e => e.GetString() ?? string.Empty).ToList();
-
-                    if (!all.Contains(srcCloudPath, StringComparer.Ordinal))
-                        refusals.Add($"源在云端不存在: {srcCloudPath}");
-
-                    if (all.Contains(destCloudPath, StringComparer.Ordinal))
-                        refusals.Add($"目标已存在，拒绝覆盖: {destCloudPath}");
-                }
-                else
-                {
-                    refusals.Add("列不出云端目录，无法核对源与目标 —— 拒绝执行。");
-                }
-            }
-
-            string? result = null;
-            var executed = false;
-
-            if (refusals.Count == 0 && !dryRun)
-            {
-                try
-                {
-                    result = ui.MoveCloudObject(sandboxId, magic, root!, srcCloudPath, destCloudPath);
-                    executed = true;
-                }
-                catch (Exception ex)
-                {
-                    refusals.Add($"调用客户端实现失败: {ex.GetType().Name}: {ex.Message}");
-                }
-            }
-
-            return JsonSerializer.Serialize(new
-            {
-                allowed = refusals.Count == 0,
-                wouldWrite = refusals.Count == 0 && !dryRun && executed,
-                dryRun,
-                unlockVariablePresent = unlocked,
-                probe = new { sandboxId, magic, srcCloudPath, destCloudPath },
-                refusals,
-                notes = new[]
-                {
-                    "**这会改云端。** 只在同一个同步文件夹内移动，不跨沙箱。",
-                    "目标已存在一律拒绝 —— 也就是只做重命名语义，绝不覆盖。",
-                    "执行前会实际列出云端目录核对源存在、目标不存在。",
-                    "客户端还要求源和目标都不是根目录。",
                 },
                 executed,
                 result,
@@ -1417,6 +1286,15 @@ public sealed class PluginTools
             note = "桥最多 1.5 秒后重载。MCP 连接会断开，客户端需要重连。",
             limitation = "只重载插件；UI 钩子在默认域卸不掉，改它仍需重启客户端。",
         }, Indented);
+    }
+
+    private static bool ClientSucceeded(string result, List<string> refusals)
+    {
+        using var doc = JsonDocument.Parse(result);
+        if (doc.RootElement.TryGetProperty("ok", out var ok) && ok.ValueKind == JsonValueKind.True) return true;
+        var reason = doc.RootElement.TryGetProperty("reason", out var r) ? r.ToString() : "客户端未明确返回成功。";
+        refusals.Add("客户端执行失败: " + reason);
+        return false;
     }
 
     private static string Error(Exception ex) => JsonSerializer.Serialize(new

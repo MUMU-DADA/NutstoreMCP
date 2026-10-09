@@ -1,7 +1,11 @@
+// 离线验证界面遍历与客户端安全守卫。
+using NutstoreMcp.ClientBindings;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
 using System.Windows.Media;
+using System.Reflection;
+using System.Reflection.Emit;
 using NutstoreMcp.UiHook;
 
 namespace UiHookProbe;
@@ -39,6 +43,8 @@ internal static class Program
         failures += Check("L3 写入守卫：已绑定的沙箱拒绝重绑", Guard_AlreadySyncedSandboxRefused);
         failures += Check("L3 禁止清单：危险客户端方法全被拦下", Forbidden_KnownDangerousMethodsBlocked);
         failures += Check("L3 禁止清单：正常方法不被误伤", Forbidden_SafeMethodsNotBlocked);
+        failures += Check("反射桥：删除哈希与请求构造入口在执行前被拦", Bridge_DeleteEntrypointsNeverInvoked);
+        failures += Check("反射桥：实例、属性链与反射结果不能越过客户端边界", Bridge_ObjectBoundariesNeverBypassed);
 
         Console.WriteLine();
         Console.WriteLine(failures == 0 ? "══ 全部通过 ══" : $"══ {failures} 项失败 ══");
@@ -344,6 +350,9 @@ internal static class Program
             "UnregisterSyncRoot",
             "DisconnectSyncRoot",
             "DisableSyncRootOnDemandPopulation",
+            ClientSymbols.DeleteSandbox,
+            "MakeDeleteSandboxRequest",
+            ClientSymbols.DeleteObject,
         ];
 
         var missed = mustBlock
@@ -382,6 +391,281 @@ internal static class Program
 
         return (wrongly.Count == 0,
             wrongly.Count == 0 ? $"{mustPass.Length} 个正常方法未被误伤" : "误伤: " + string.Join(", ", wrongly));
+    }
+
+    private static (bool, string) Bridge_DeleteEntrypointsNeverInvoked()
+    {
+        // 只在内存构造假客户端。方法执行时加计数器，绝不加载或调用真正的删除实现。
+        var dangerous = ClientSymbols.ForbiddenMethodNames;
+
+        var assembly = AppDomain.CurrentDomain.DefineDynamicAssembly(
+            new AssemblyName("NutstoreClient.BridgeSafetyProbe"), AssemblyBuilderAccess.Run);
+        var module = assembly.DefineDynamicModule("MemoryOnly");
+        var hook = new UiHook();
+        var checkedCases = 0;
+        var failures = new List<string>();
+
+        foreach (var isStatic in new[] { true, false })
+        {
+            var type = DefineBridgeProbeType(module,
+                isStatic ? "NutstoreClient.StaticDeleteProbe" : "NutstoreClient.InstanceDeleteProbe",
+                dangerous, isStatic);
+            var counter = type.GetField("InvocationCount")!;
+
+            string Script(string name) => isStatic
+                ? $"CALL|{type.FullName}|{name}"
+                : $"NEW|{type.FullName}\nINSTANCE|0|{name}";
+
+            // 先证明类型解析与调用链可用，避免「找不到类型」让拒绝测试假绿。
+            var safe = hook.InvokeBridge(Script("ReadProbe"));
+            if (safe.IndexOf("\"ok\":true", StringComparison.Ordinal) < 0
+                || (int)counter.GetValue(null)! != 1)
+            {
+                failures.Add(type.Name + " 正常调用未到达假实现");
+                continue;
+            }
+
+            counter.SetValue(null, 0);
+            foreach (var method in dangerous)
+            {
+                foreach (var variant in new[] { method, method.ToUpperInvariant(), "  " + method + "  " })
+                {
+                    var result = hook.InvokeBridge(Script(variant));
+                    checkedCases++;
+                    if (result.IndexOf("\"ok\":false", StringComparison.Ordinal) < 0
+                        || result.IndexOf("命中禁止清单", StringComparison.Ordinal) < 0
+                        || (int)counter.GetValue(null)! != 0)
+                    {
+                        failures.Add(type.Name + "." + variant + " 未在调用前被拒绝");
+                    }
+                }
+            }
+        }
+
+        return (failures.Count == 0,
+            failures.Count == 0
+                ? $"CALL / INSTANCE 共 {checkedCases} 个拒绝用例；假实现执行次数均为 0"
+                : string.Join("; ", failures));
+    }
+
+    private static Type DefineBridgeProbeType(
+        ModuleBuilder module, string name, string[] dangerous, bool isStatic)
+    {
+        var type = module.DefineType(name, TypeAttributes.Public | TypeAttributes.Class);
+        type.DefineDefaultConstructor(MethodAttributes.Public);
+        var counter = type.DefineField("InvocationCount", typeof(int), FieldAttributes.Public | FieldAttributes.Static);
+
+        foreach (var method in dangerous.Concat(new[] { "ReadProbe" }))
+        {
+            var attributes = MethodAttributes.Public | (isStatic ? MethodAttributes.Static : 0);
+            var builder = type.DefineMethod(method, attributes, typeof(void), Type.EmptyTypes);
+            var il = builder.GetILGenerator();
+            il.Emit(OpCodes.Ldsfld, counter);
+            il.Emit(OpCodes.Ldc_I4_1);
+            il.Emit(OpCodes.Add);
+            il.Emit(OpCodes.Stsfld, counter);
+            il.Emit(OpCodes.Ret);
+        }
+
+        return type.CreateType()!;
+    }
+
+    private static (bool, string) Bridge_ObjectBoundariesNeverBypassed()
+    {
+        // 两个程序集只存在于内存。外部 base 验证继承来的成员仍须检查声明程序集。
+        var externalAssembly = AppDomain.CurrentDomain.DefineDynamicAssembly(
+            new AssemblyName("BridgeExternalBoundaryProbe"), AssemblyBuilderAccess.Run);
+        var externalModule = externalAssembly.DefineDynamicModule("MemoryOnly");
+        var externalBuilder = externalModule.DefineType("BridgeExternal.NormalObject", TypeAttributes.Public | TypeAttributes.Class);
+        externalBuilder.DefineDefaultConstructor(MethodAttributes.Public);
+        var externalCounterBuilder = externalBuilder.DefineField("InvocationCount", typeof(int), FieldAttributes.Public | FieldAttributes.Static);
+        var externalField = externalBuilder.DefineField("ExternalField", typeof(int), FieldAttributes.Public);
+        var touch = externalBuilder.DefineMethod("TouchExternal", MethodAttributes.Public, typeof(void), Type.EmptyTypes);
+        EmitBoundaryCounter(touch.GetILGenerator(), externalCounterBuilder, returnValue: null);
+        var externalGetter = externalBuilder.DefineMethod("get_ExternalValue", MethodAttributes.Public | MethodAttributes.SpecialName,
+            typeof(int), Type.EmptyTypes);
+        EmitBoundaryCounter(externalGetter.GetILGenerator(), externalCounterBuilder, returnValue: 23);
+        var externalProperty = externalBuilder.DefineProperty("ExternalValue", PropertyAttributes.None, typeof(int), Type.EmptyTypes);
+        externalProperty.SetGetMethod(externalGetter);
+        var externalType = externalBuilder.CreateType()!;
+        var externalCounter = externalType.GetField("InvocationCount")!;
+        var externalObject = Activator.CreateInstance(externalType)!;
+        externalType.GetField(externalField.Name)!.SetValue(externalObject, 23);
+
+        var assembly = AppDomain.CurrentDomain.DefineDynamicAssembly(
+            new AssemblyName("NutstoreClient.BridgeBoundaryProbe"), AssemblyBuilderAccess.Run);
+        var module = assembly.DefineDynamicModule("MemoryOnly");
+        var builder = module.DefineType("NutstoreClient.BridgeBoundaryObject", TypeAttributes.Public | TypeAttributes.Class, externalType);
+        var forbiddenCountBuilder = builder.DefineField("ForbiddenInvocationCount", typeof(int), FieldAttributes.Public | FieldAttributes.Static);
+        var safeCountBuilder = builder.DefineField("SafeInvocationCount", typeof(int), FieldAttributes.Public | FieldAttributes.Static);
+        var sources = new Dictionary<string, FieldBuilder>();
+        foreach (var pair in new[]
+                 {
+                     (Name: "Type", Type: typeof(Type)), (Name: "MethodInfo", Type: typeof(MethodInfo)),
+                     (Name: "Delegate", Type: typeof(Delegate)), (Name: "Assembly", Type: typeof(Assembly)),
+                     (Name: "Module", Type: typeof(Module)), (Name: "External", Type: typeof(object)),
+                 })
+        {
+            var source = builder.DefineField(pair.Name + "Source", pair.Type, FieldAttributes.Public | FieldAttributes.Static);
+            sources.Add(pair.Name, source);
+            foreach (var isStatic in new[] { true, false })
+            {
+                var method = builder.DefineMethod("Return" + pair.Name + (isStatic ? "" : "Instance"),
+                    MethodAttributes.Public | (isStatic ? MethodAttributes.Static : 0), pair.Type, Type.EmptyTypes);
+                var il = method.GetILGenerator();
+                il.Emit(OpCodes.Ldsfld, source);
+                il.Emit(OpCodes.Ret);
+            }
+            var propertyGetter = builder.DefineMethod("get_" + pair.Name + "Property",
+                MethodAttributes.Public | MethodAttributes.SpecialName, pair.Type, Type.EmptyTypes);
+            var getterIl = propertyGetter.GetILGenerator();
+            getterIl.Emit(OpCodes.Ldsfld, source);
+            getterIl.Emit(OpCodes.Ret);
+            var property = builder.DefineProperty(pair.Name + "Property", PropertyAttributes.None, pair.Type, Type.EmptyTypes);
+            property.SetGetMethod(propertyGetter);
+        }
+
+        var typeField = builder.DefineField("TypeField", typeof(Type), FieldAttributes.Public);
+        var methodField = builder.DefineField("MethodInfoField", typeof(MethodInfo), FieldAttributes.Public);
+        var safeField = builder.DefineField("SafeValue", typeof(int), FieldAttributes.Public);
+        var childField = builder.DefineField("ChildField", builder, FieldAttributes.Public);
+        var constructor = builder.DefineConstructor(MethodAttributes.Public, CallingConventions.Standard, Type.EmptyTypes);
+        var ctorIl = constructor.GetILGenerator();
+        ctorIl.Emit(OpCodes.Ldarg_0);
+        ctorIl.Emit(OpCodes.Call, externalType.GetConstructor(Type.EmptyTypes)!);
+        ctorIl.Emit(OpCodes.Ldarg_0);
+        ctorIl.Emit(OpCodes.Ldsfld, sources["Type"]);
+        ctorIl.Emit(OpCodes.Stfld, typeField);
+        ctorIl.Emit(OpCodes.Ldarg_0);
+        ctorIl.Emit(OpCodes.Ldsfld, sources["MethodInfo"]);
+        ctorIl.Emit(OpCodes.Stfld, methodField);
+        ctorIl.Emit(OpCodes.Ldarg_0);
+        ctorIl.Emit(OpCodes.Ldc_I4, 17);
+        ctorIl.Emit(OpCodes.Stfld, safeField);
+        ctorIl.Emit(OpCodes.Ldarg_0);
+        ctorIl.Emit(OpCodes.Ldarg_0);
+        ctorIl.Emit(OpCodes.Stfld, childField);
+        ctorIl.Emit(OpCodes.Ret);
+
+        var childGetter = builder.DefineMethod("get_Child", MethodAttributes.Public | MethodAttributes.SpecialName, builder, Type.EmptyTypes);
+        var childIl = childGetter.GetILGenerator();
+        childIl.Emit(OpCodes.Ldarg_0);
+        childIl.Emit(OpCodes.Ret);
+        var childProperty = builder.DefineProperty("Child", PropertyAttributes.None, builder, Type.EmptyTypes);
+        childProperty.SetGetMethod(childGetter);
+        var safeGetter = builder.DefineMethod("get_Value", MethodAttributes.Public | MethodAttributes.SpecialName, typeof(int), Type.EmptyTypes);
+        var safeGetterIl = safeGetter.GetILGenerator();
+        safeGetterIl.Emit(OpCodes.Ldarg_0);
+        safeGetterIl.Emit(OpCodes.Ldfld, safeField);
+        safeGetterIl.Emit(OpCodes.Ret);
+        var safeProperty = builder.DefineProperty("Value", PropertyAttributes.None, typeof(int), Type.EmptyTypes);
+        safeProperty.SetGetMethod(safeGetter);
+        var safeMethod = builder.DefineMethod("ReadProbe", MethodAttributes.Public, typeof(int), Type.EmptyTypes);
+        EmitBoundaryCounter(safeMethod.GetILGenerator(), safeCountBuilder, returnValue: 17);
+        var forbidden = builder.DefineMethod(ClientSymbols.DeleteSandbox, MethodAttributes.Public | MethodAttributes.Static,
+            typeof(void), Type.EmptyTypes);
+        EmitBoundaryCounter(forbidden.GetILGenerator(), forbiddenCountBuilder, returnValue: null);
+        var clientType = builder.CreateType()!;
+        var dangerousMethod = clientType.GetMethod(ClientSymbols.DeleteSandbox)!;
+        var forbiddenCount = clientType.GetField("ForbiddenInvocationCount")!;
+        var safeCount = clientType.GetField("SafeInvocationCount")!;
+        clientType.GetField("TypeSource")!.SetValue(null, clientType);
+        clientType.GetField("MethodInfoSource")!.SetValue(null, dangerousMethod);
+        clientType.GetField("DelegateSource")!.SetValue(null, Delegate.CreateDelegate(typeof(Action), dangerousMethod));
+        clientType.GetField("AssemblySource")!.SetValue(null, assembly);
+        clientType.GetField("ModuleSource")!.SetValue(null, module);
+        clientType.GetField("ExternalSource")!.SetValue(null, externalObject);
+
+        var hook = new UiHook();
+        var failures = new List<string>();
+        var cases = 0;
+        var newClient = "NEW|" + clientType.FullName;
+        void Allow(string label, string script, string expectedValue = "17")
+        {
+            var result = hook.InvokeBridge(script);
+            cases++;
+            if (result.IndexOf("\"ok\":true", StringComparison.Ordinal) < 0
+                || result.IndexOf("\"value\":\"" + expectedValue + "\"", StringComparison.Ordinal) < 0)
+                failures.Add(label + "合法调用未通过：" + result);
+        }
+        void Deny(string label, string script, int completedLines)
+        {
+            var result = hook.InvokeBridge(script);
+            cases++;
+            if (result.IndexOf("\"ok\":false", StringComparison.Ordinal) < 0
+                || result.IndexOf("\"stepCount\":\"" + completedLines + "\"", StringComparison.Ordinal) < 0
+                || (int)forbiddenCount.GetValue(null)! != 0 || (int)externalCounter.GetValue(null)! != 0)
+                failures.Add(label + "没有在预期边界拒绝：" + result);
+        }
+
+        // 先证明创建、实例方法与客户端成员链确实可达，不能靠类型解析失败假绿。
+        Allow("客户端实例", newClient + "\nINSTANCE|0|ReadProbe");
+        Allow("客户端字段", newClient + "\nGET|0|SafeValue");
+        Allow("客户端getter", newClient + "\nGET|0|Value");
+        Allow("客户端属性链", newClient + "\nCHAIN|0|Child|Child|Value");
+        Allow("客户端字段链", newClient + "\nCHAIN|0|ChildField|SafeValue");
+        if ((int)safeCount.GetValue(null)! != 1) failures.Add("合法实例方法没有到达假实现");
+
+        Deny("钩子自身不能被NEW", "NEW|NutstoreMcp.UiHook.UiHook", 0);
+        foreach (var prefix in new[] { "NutstoreMcpFake", "NutstorePretend" })
+        {
+            var collisionAssembly = AppDomain.CurrentDomain.DefineDynamicAssembly(
+                new AssemblyName(prefix), AssemblyBuilderAccess.Run);
+            var collisionModule = collisionAssembly.DefineDynamicModule("MemoryOnly");
+            var collisionBuilder = collisionModule.DefineType(prefix + ".BoundaryObject", TypeAttributes.Public | TypeAttributes.Class);
+            var collisionCountBuilder = collisionBuilder.DefineField("CreationCount", typeof(int), FieldAttributes.Public | FieldAttributes.Static);
+            var collisionConstructor = collisionBuilder.DefineConstructor(MethodAttributes.Public, CallingConventions.Standard, Type.EmptyTypes);
+            var collisionIl = collisionConstructor.GetILGenerator();
+            collisionIl.Emit(OpCodes.Ldarg_0);
+            collisionIl.Emit(OpCodes.Call, typeof(object).GetConstructor(Type.EmptyTypes)!);
+            EmitBoundaryCounter(collisionIl, collisionCountBuilder, returnValue: null);
+            var collisionType = collisionBuilder.CreateType()!;
+            Deny("程序集前缀碰撞" + prefix, "NEW|" + collisionType.FullName, 0);
+            if ((int)collisionType.GetField("CreationCount")!.GetValue(null)! != 0)
+                failures.Add(prefix + "的构造函数越过程序集边界执行");
+        }
+
+        Deny("原GetType/GetMethod/Invoke绕过", newClient + "\nINSTANCE|0|GetType\nINSTANCE|1|GetMethod|"
+            + ClientSymbols.DeleteSandbox + "\nINSTANCE|2|Invoke|-|-", 1);
+        Deny("继承Object方法的声明归属", newClient + "\nINSTANCE|0|ToString", 1);
+        Deny("继承外部方法的声明归属", newClient + "\nINSTANCE|0|TouchExternal", 1);
+        Deny("继承外部getter的声明归属", newClient + "\nGET|0|ExternalValue", 1);
+        Deny("继承外部field的声明归属", newClient + "\nGET|0|ExternalField", 1);
+
+        foreach (var name in new[] { "Type", "MethodInfo", "Delegate", "Assembly", "Module" })
+        {
+            Deny("CALL返回" + name, "CALL|" + clientType.FullName + "|Return" + name, 0);
+            Deny("INSTANCE返回" + name, newClient + "\nINSTANCE|0|Return" + name + "Instance", 1);
+            Deny("GET属性返回" + name, newClient + "\nGET|0|" + name + "Property", 1);
+            Deny("CHAIN属性返回" + name, newClient + "\nCHAIN|0|Child|" + name + "Property", 1);
+        }
+        foreach (var field in new[] { "TypeField", "MethodInfoField" })
+        {
+            Deny("GET反射字段" + field, newClient + "\nGET|0|" + field, 1);
+            Deny("CHAIN反射字段" + field, newClient + "\nCHAIN|0|ChildField|" + field, 1);
+        }
+
+        var externalSlot = "CALL|" + clientType.FullName + "|ReturnExternal";
+        Allow("客户端可返回外部普通对象作为数据", externalSlot, externalType.FullName!);
+        Deny("外部slot INSTANCE", externalSlot + "\nINSTANCE|0|TouchExternal", 1);
+        Deny("外部slot GET getter", externalSlot + "\nGET|0|ExternalValue", 1);
+        Deny("外部slot GET field", externalSlot + "\nGET|0|ExternalField", 1);
+        Deny("外部slot CHAIN", externalSlot + "\nCHAIN|0|ExternalValue", 1);
+        Deny("CHAIN中间外部对象", newClient + "\nCHAIN|0|ExternalProperty|ExternalValue", 1);
+
+        return (failures.Count == 0, failures.Count == 0
+            ? $"{cases} 个内存假客户端边界用例通过；禁止实现与外部方法/getter调用次数均为0"
+            : string.Join("; ", failures));
+    }
+
+    private static void EmitBoundaryCounter(ILGenerator il, FieldBuilder counter, int? returnValue)
+    {
+        il.Emit(OpCodes.Ldsfld, counter);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Add);
+        il.Emit(OpCodes.Stsfld, counter);
+        if (returnValue is int value) il.Emit(OpCodes.Ldc_I4, value);
+        il.Emit(OpCodes.Ret);
     }
 
     /// <summary>从 Json.Obj 产出的 JSON 里抠出 type 字段。</summary>

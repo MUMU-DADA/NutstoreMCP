@@ -1,3 +1,5 @@
+// 拦截禁止经 MCP 调用的客户端方法。
+using NutstoreMcp.ClientBindings;
 using System.Text.Json;
 
 namespace NutstoreMcp.Plugin.L3;
@@ -22,6 +24,20 @@ public static class ForbiddenClientMethods
         ["MigrateSandboxObjectTableToUnicodeNoCaseCollation"] =
             "重建对象表。批量重写同步元数据，失败可能让本地与云端失去对应关系。",
 
+        // 不能只拦语义名字：客户端云端操作入口使用混淆哈希。
+        [ClientSymbols.DeleteSandbox] =
+            "删除云端沙箱。已反编译确认调用 MakeDeleteSandboxRequest 并发出请求，"
+            + "不是沙箱状态查询；返回 bool 不代表只读。",
+
+        ["MakeDeleteSandboxRequest"] =
+            "构造删除云端沙箱的请求。禁止经通用桥拼装再提交删除请求。",
+
+        [ClientSymbols.DeleteObject] =
+            "删除云端文件或目录。两个重载最终都提交删除元数据，可能传播到本地同步文件。",
+
+        ["DeleteObject"] = "删除对象；禁止通过语义名称绕过混淆入口禁令。",
+        ["RemoveObject"] = "移除对象；禁止通过语义名称绕过混淆入口禁令。",
+
         // ── OS 层（Windows 云文件 API）──
 
         ["UnregisterAllNutstoreSyncRoots"] =
@@ -45,6 +61,15 @@ public static class ForbiddenClientMethods
         ["RemoveAUMIDToSyncRoots"] =
             "改动同步根与应用的关联注册，可能让同步根失去归属。",
     };
+
+    static ForbiddenClientMethods()
+    {
+        foreach (var name in ClientSymbols.ForbiddenMethodNames)
+            if (!Denylist.ContainsKey(name))
+                throw new InvalidOperationException("共享禁止清单缺少插件拒绝说明：" + name);
+        if (Denylist.Count != ClientSymbols.ForbiddenMethodNames.Length)
+            throw new InvalidOperationException("插件与共享禁止清单不一致。");
+    }
 
     /// <summary>
     /// 检查一个客户端方法是否被禁止调用。

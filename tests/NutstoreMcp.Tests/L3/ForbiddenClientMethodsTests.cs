@@ -1,3 +1,5 @@
+// 验证危险客户端方法拦截。
+using NutstoreMcp.ClientBindings;
 using NutstoreMcp.Plugin.L3;
 
 namespace NutstoreMcp.Tests;
@@ -27,6 +29,11 @@ public class ForbiddenClientMethodsTests
         "DisconnectSyncRoot",
         "DisableSyncRootOnDemandPopulation",
         "RemoveAUMIDToSyncRoots",
+        "DeleteObject",
+        "RemoveObject",
+        ClientSymbols.DeleteSandbox,
+        "MakeDeleteSandboxRequest",
+        ClientSymbols.DeleteObject,
     ];
 
     [Theory]
@@ -68,6 +75,9 @@ public class ForbiddenClientMethodsTests
         "SetSyncLocation",
         "DiscardDuplicateAndEnqueue",
         "HasPendingBindCommand",
+        ClientSymbols.ReadPathAcl, // 读子路径权限
+        ClientSymbols.ReadEventsWithLocalWrites, // 读增量事件
+        "MakeGetSyncFolderDetailRequest",
     ];
 
     [Theory]
@@ -93,6 +103,18 @@ public class ForbiddenClientMethodsTests
         Assert.NotNull(reason);
         // 只写「禁止」没用，必须让读的人知道为什么
         Assert.Contains("同步根", reason, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData(ClientSymbols.DeleteSandbox, "删除云端沙箱")]
+    [InlineData("MakeDeleteSandboxRequest", "删除云端沙箱")]
+    [InlineData(ClientSymbols.DeleteObject, "删除云端文件或目录")]
+    public void 混淆删除入口的拒绝理由说明实际行为(string method, string consequence)
+    {
+        var reason = ForbiddenClientMethods.Check(ClientSymbols.CloudOpsType, "  " + method + "  ");
+
+        Assert.NotNull(reason);
+        Assert.Contains(consequence, reason, StringComparison.Ordinal);
     }
 
     [Fact]

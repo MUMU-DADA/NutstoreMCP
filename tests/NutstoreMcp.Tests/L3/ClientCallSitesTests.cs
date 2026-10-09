@@ -1,3 +1,5 @@
+// 验证客户端调用登记。
+using NutstoreMcp.ClientBindings;
 using NutstoreMcp.Plugin.L3;
 
 namespace NutstoreMcp.Tests;
@@ -77,14 +79,13 @@ public class ClientCallSitesTests
     }
 
     [Fact]
-    public void 未使用的调用点要标注出来()
+    public void 建目录登记包含已验证的冲突边界()
     {
-        // cfd1df84 已定位但没接出来。留着登记是为了防止「它已经在清单里了，
-        // 直接调吧」这种推理 —— 它必须重新走一遍确认流程。
-        var unused = ClientCallSites.Find("cfd1df8451110086567f3d56edf4697e8");
+        var create = ClientCallSites.Find(ClientSymbols.CreateDirectory);
 
-        Assert.NotNull(unused);
-        Assert.Contains("未使用", unused!.Purpose, StringComparison.Ordinal);
+        Assert.NotNull(create);
+        Assert.True(create!.Mutates);
+        Assert.Contains("DuplicateName", create.Why, StringComparison.Ordinal);
     }
 
     [Fact]
