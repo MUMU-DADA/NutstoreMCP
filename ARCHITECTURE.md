@@ -544,6 +544,56 @@ L2  nutstore_l3_bind_candidates
 最安全的做法是建一个**全新的空文件夹**配一个**空的本地目录** ——
 两端都没有数据，构造上就没有可丢的东西。
 
+### 客户端的云端操作层（反编译得到，混淆类）
+
+**原则**：凡是客户端能做的事，都调它的实现 —— 不走需要第三方凭据的接口。
+需要申请应用密码的做法违背了「装上插件就能用」的初衷。
+
+**定位方式**：这些方法的类型名和方法名**都是哈希**，按语义名字搜永远搜不到
+（这正是前几轮找不到入口的原因）。用 `ilspycmd` 反编译后按调用链定位：
+
+```powershell
+ilspycmd -p -o <输出目录> "C:\Program Files\Nutstore\bin-*\NutstoreClient.Legacy.dll"
+```
+
+核心类：`A.c3795a089d76f103f11c4fe70f38ac8ca`（约 5200 行，客户端的云端操作层）
+
+| 能力 | 方法 | 说明 |
+|---|---|---|
+| **新建同步文件夹** | `ccdd0d7373903386c87fb2d3077bf8ced(name, desc, SandboxACL, doNotSync)` → `SandboxInfo` | 已实现 |
+| **列出云端目录** | `c05097d346f069f32352068d6ff359701(SandboxIdentifier, dir, type)` → `List<string>` | 返回目录下的路径；所有调用者都传 `type = null` |
+| **建目录（沙箱内）** | `cfd1df8451110086567f3d56edf4697e8(NutstorePath)` / `(NutstorePath, ExAttribute)` | 走元数据写入，operation=ADD |
+| 建文件 | `cf02e04aba958d38757ce778e8f94ae50(CreateFileParam)` | |
+| 移动 | `ca22f644cc5eac05e5c099fb105c5b6f5(src, dest, IEnumerable<WriteMetaDataParams>)` | |
+| 上传 | `cd20b0bb262184cd692f5b3bba1477f24(NutstorePath, long, Stream, ...)` | |
+| 搜索 | `c7a517b89b338a47fe91fa3ec2a0823c3(string)` → `SearchResponse` | |
+
+**这些方法自己拼会话头、自己发请求。** 会话头是：
+
+```
+Base64(UserName) + ":" + Base64(MachineName) + ":" + SessionToken
+```
+
+其中 `SessionToken` 是**运行时活值** —— 数据库里只有 `encrypted_token`。
+所以「找凭据」这条路从一开始就是错的：不需要凭据，需要的是**在默认域里调这些方法**。
+
+**关键前置类型**（都能公开构造）：
+
+```csharp
+public SandboxIdentifier(long id, long magic)                    // Nutstore.Common
+public NSSandbox(long id, long magic, string localAbsPath, bool allowUncPath)
+static SandboxACL GetDefaultPerm()
+static NutstorePath FromNutstorePath(NSSandbox sandbox, string nutstorePath)
+```
+
+注意 `NutstorePath` 的构造函数要求**绝对的本地路径**（`Path.IsPathRooted`）——
+所以需要 `SandboxIdentifier` 的重载（上表第二个）比需要 `NutstorePath` 的更适合
+「云端有、本地没绑」的场景。
+
+**升级风险**：混淆名在客户端升级后可能变化。所有调用点都必须显式处理
+「找不到类型/方法」，报「客户端多半升级了，需要重新反编译」，
+而不是静默失败。
+
 ### 契约两处部署的检查
 
 契约 DLL 在程序目录和插件目录各一份。`build.ps1` 会比对**接口方法清单**
