@@ -203,6 +203,35 @@ public class CloudCreateOperationsTests
         }
     }
 
+    [Fact]
+    public void 写后目录列表失败不能报告成功()
+    {
+        // 列表读不到就无法推断目标唯一存在；即使默认域说成功也不许报 executed。
+        var cloud = new Fake();
+        cloud.ListingOverride = path => path == "/dir" && cloud.FileWrites > 0
+            ? "{\"ok\":false,\"reason\":\"listing failed\"}"
+            : null;
+        using var result = cloud.Create();
+
+        Assert.Equal(1, cloud.FileWrites);
+        Assert.False(Flag(result, "executed"));
+        Assert.False(result.RootElement.GetProperty("verification").GetProperty("ok").GetBoolean());
+    }
+
+    [Fact]
+    public void 写后出现大小写别名副本不能报告成功()
+    {
+        // 目标旁边多出一个仅大小写不同的副本时命中数不是 1 —— 这正是要拒绝的形态。
+        var cloud = new Fake { AliasAfterWrite = "/dir/A.TXT" };
+        using var result = cloud.Create();
+
+        Assert.Equal(1, cloud.FileWrites);
+        Assert.False(Flag(result, "executed"));
+        Assert.False(result.RootElement.GetProperty("verification").GetProperty("targetPresent").GetBoolean());
+        Assert.Contains(result.RootElement.GetProperty("verification").GetProperty("errors").EnumerateArray(),
+            error => error.GetString()!.Contains("唯一出现"));
+    }
+
     private static bool Flag(JsonDocument result, string name) => result.RootElement.GetProperty(name).GetBoolean();
 
     private sealed record Item(string Type, bool Deleted, long Version, long Size, string Hash);
@@ -217,6 +246,8 @@ public class CloudCreateOperationsTests
         public string? CreatedDirectory { get; private set; }
         public string? CreatedFile { get; private set; }
         public string? InjectIntoNewDirectory { get; set; }
+        public string? AliasAfterWrite { get; set; }
+        public Func<string, string?>? ListingOverride { get; set; }
         public bool ApplyDirectoryWrite { get; set; } = true;
         public bool ApplyFileWrite { get; set; } = true;
         public bool WriteFileToCloud { get; set; } = true;
@@ -255,6 +286,8 @@ public class CloudCreateOperationsTests
         private string List(string path)
         {
             ListCalls.Add(path);
+            var replacement = ListingOverride?.Invoke(path);
+            if (replacement is not null) return replacement;
             return JsonSerializer.Serialize(new
             {
                 ok = true,
@@ -296,6 +329,7 @@ public class CloudCreateOperationsTests
             CreatedFile = target;
             if (ApplyFileWrite && WriteFileToCloud)
                 Objects[target] = File(_contentLength, CorruptFileAfterWrite ? "different-hash" : CloudHash);
+            if (AliasAfterWrite is not null) Objects[AliasAfterWrite] = File(_contentLength, "alias-hash");
             if (ThrowOnFileWrite) throw new InvalidOperationException("simulated response failure");
             return JsonSerializer.Serialize(new { ok = true, cloudHash = CloudHash, verification = new { ok = true } });
         }
