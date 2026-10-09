@@ -614,6 +614,51 @@ SandboxInfo info = c3795a08....ccdd0d73...("名字", string.Empty, acl, doNotSyn
 `NO_RIGHT` 不是「建出来没有权限」：创建者是 owner，这个 ACL 描述的是
 「其他用户没有额外权限」。
 
+### 控制软件的设置（已测绘，未实现）
+
+这是用户最初提的「控制软件的设置项目」，也是 L3 里最后一块没做的。
+
+**取活服务的路径**（不需要遍历对象图）：
+
+```
+CommonServiceLocator.ServiceLocator.Current        // 静态属性
+  → IServiceLocator.GetInstance(typeof(IConfigureService))
+```
+
+`CommonServiceLocator` + `Prism.Unity.Wpf` 说明客户端用的是 Prism 6.x 那套
+（不是 7+ 的 `ContainerLocator`），所以 `ServiceLocator.Current` 是可用的。
+
+**设置清单**（`Nutstore.Client.Wpf.Services.IConfigureService`，实测反射得到）：
+
+| 属性 | 对应界面上的 |
+|---|---|
+| `AutoStart` | 开机自动启动 |
+| `IsShutdownOnIdle` | 同步完成后关机 |
+| `IsNotifyOnFilesUpdated` | 文件更新后启动气泡提醒 |
+| `EnableSafeGuard` | 高级安全验证 |
+| `EnableFileProtectionLock` | 启用文件保护锁 |
+| `IsSyncPaused` | 自动暂停同步 |
+| `IsDirectOpen` | 直接打开文件夹 |
+| `IsExperimental` | 体验最新功能 |
+| `SearchHotkey` | 启用搜索快捷键（`ConfigureItem<GlobalHotKey>`） |
+| `EnableLANSync` / `AutoUploadLockedFile` / `Proxy` / `Storage` | 其余 |
+
+**这些属性名与设置界面控件树里读到的设置项逐一对得上** —— 两条独立路径互证。
+
+**写入方式**：`ConfigureItem<T>` 的值改动后调 `IConfigureItem.Save(bool force)`
+（同接口还有 `Restore(bool force)` / `IsChanged` / `IsAutoSave`）。
+
+**还差**：`ConfigureItem<T>` 是泛型（`ConfigureItem\`1`），要读/写值需要
+先取开放泛型再按 `Value`（或等价成员）访问 —— 这一步没做。
+
+**⚠️ 这几个设置不该和普通开关共用守卫**：
+
+- `EnableFileProtectionLock` —— 会**安装文件系统驱动**来保护文件
+- `EnableSafeGuard` —— 影响文件夹同步与权限操作前的验证
+- `IsSyncPaused` —— 暂停同步会让云端与本地脱节
+
+前两个涉及系统级改动，属于「做完不好撤」的那类。
+
 ### 契约两处部署的检查
 
 契约 DLL 在程序目录和插件目录各一份。`build.ps1` 会比对**接口方法清单**
