@@ -509,6 +509,86 @@ public sealed class PluginTools
         }
     }
 
+    [McpServerTool(Name = "nutstore_l3_verify_call_sites", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
+    [Description("校验我们依赖的客户端方法是否还在（含混淆过的哈希名）。客户端升级后混淆名可能变化 —— 那个失败如果等到真要写的时候才发现，代价高得多。只读，不调用任何方法。")]
+    public static string L3VerifyCallSites()
+    {
+        try
+        {
+            var results = new List<object>();
+            var gone = new List<string>();
+
+            foreach (var site in L3.ClientCallSites.Registered)
+            {
+                var type = L3.ClientAssemblies.FindType(site.TypeName);
+
+                var present = false;
+                var overloads = 0;
+                var detail = "类型不存在";
+
+                if (type is not null)
+                {
+                    // 不能用不带参数类型的 GetMethod(name, flags) ——
+                    // 有重载时会抛 AmbiguousMatchException。
+                    // c05097d3... 就有两个重载（NutstorePath 版和 SandboxIdentifier 版）。
+                    var found = type
+                        .GetMethods(System.Reflection.BindingFlags.Public
+                            | System.Reflection.BindingFlags.NonPublic
+                            | System.Reflection.BindingFlags.Static
+                            | System.Reflection.BindingFlags.Instance)
+                        .Where(m => m.Name == site.MethodName)
+                        .ToList();
+
+                    overloads = found.Count;
+                    present = overloads > 0;
+
+                    detail = overloads switch
+                    {
+                        0 => "类型在但方法不在",
+                        1 => "在（1 个重载）",
+                        _ => $"在（{overloads} 个重载 —— 调用时必须按参数类型精确取，"
+                           + "不能用不带类型的 GetMethod）",
+                    };
+                }
+
+                if (!present)
+                {
+                    gone.Add($"{site.TypeName}.{site.MethodName}（{site.Purpose}）");
+                }
+
+                results.Add(new
+                {
+                    site.TypeName,
+                    site.MethodName,
+                    site.Purpose,
+                    mutates = site.Mutates,
+                    present,
+                    overloads,
+                    detail,
+                });
+            }
+
+            return JsonSerializer.Serialize(new
+            {
+                ok = gone.Count == 0,
+                checkedCount = results.Count,
+                missing = gone,
+                callSites = results,
+                notes = gone.Count == 0
+                    ? new[] { "全部调用点都还在。客户端升级后如果这里开始报缺失，就是混淆名变了 —— 需要重新反编译确认。" }
+                    : new[]
+                    {
+                        "有调用点找不到了 —— 客户端多半升级了，混淆名变了。",
+                        "在重新反编译确认之前，不要执行任何会写状态的 L3 操作。",
+                    },
+            }, Indented);
+        }
+        catch (Exception ex)
+        {
+            return Error(ex);
+        }
+    }
+
     [McpServerTool(Name = "nutstore_client_search_types", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
     [Description("按名字子串搜索坚果云客户端的所有类型（跨全部程序集）。用于在不知道类型全名时定位 API。只读，不执行任何客户端代码。")]
     public static string ClientSearchTypes(

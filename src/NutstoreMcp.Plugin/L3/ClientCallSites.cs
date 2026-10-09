@@ -51,7 +51,7 @@ internal static class ClientCallSites
         // 下面两个是**目标方法内部**调用的，我们从不直接调，
         // 登记它们是为了记录「读这些方法的实现时确认过它们做什么」。
         new(
-            "NutstoreClient.Common.NSSandboxDAO",
+            "NutstoreClient.DAO.NSSandboxDAO",
             "InitSandbox",
             "把沙箱的本地存储初始化到指定目录（BindSandbox 用它）",
             Mutates: true,
