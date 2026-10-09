@@ -127,8 +127,7 @@ else {
     & schtasks.exe /Run /TN $taskName 2>&1 | Out-Null
 
     # 等进程真的起来再删任务。
-    # 一开始是「运行 → 睡 6 秒 → 删」——那样会把正在启动的实例一起掐掉，
-    # 现象是「脚本说已启动，实际一个客户端进程都没有」。
+    # 一开始是「运行 → 睡 6 秒 → 删」——那样会把正在启动的实例一起掐掉。
     $deadline0 = (Get-Date).AddSeconds(60)
     while ((Get-Date) -lt $deadline0 `
            -and -not (Get-Process -Name 'NutstoreClient' -ErrorAction SilentlyContinue)) {
@@ -138,16 +137,45 @@ else {
     & schtasks.exe /Delete /TN $taskName /F 2>&1 | Out-Null
 }
 
-# 等它起来
+# 等它起来（第一次）
 $deadline = (Get-Date).AddSeconds(60)
 while ((Get-Date) -lt $deadline -and -not (Get-Process -Name 'NutstoreClient' -ErrorAction SilentlyContinue)) {
     Start-Sleep -Seconds 1
 }
 
-$started = Get-Process -Name 'NutstoreClient' -ErrorAction SilentlyContinue
-if (-not $started) { throw '坚果云没有在 60 秒内启动' }
+# ── 确认它站得住 ──
+# 只看「进程出现过」是不够的：实测发生过「脚本报已启动、随后客户端退出」，
+# 结果用户的同步停了而我以为成功了。所以起来之后要再等一会儿复查。
+function Test-Alive {
+    Start-Sleep -Seconds 12
+    return [bool](Get-Process -Name 'NutstoreClient' -ErrorAction SilentlyContinue)
+}
 
-Write-Host "  ✅ 已启动（PID $($started.Id)）" -ForegroundColor Green
+$started = Get-Process -Name 'NutstoreClient' -ErrorAction SilentlyContinue
+
+if ($started -and (Test-Alive)) {
+    Write-Host "  ✅ 已启动并保持运行（PID $($started.Id)）" -ForegroundColor Green
+}
+else {
+    # 计划任务那条路没成（或者起来又死了）—— 退回直接启动再确认一次。
+    # 直接启动的进程是 DSH 沙箱子进程，命名管道可能起不来，
+    # 但「客户端在跑」比「角标集成完好」重要得多。
+    Write-Host '  ⚠️  计划任务启动的实例没站住，退回直接启动…' -ForegroundColor Yellow
+    Get-Process -Name 'nutstore_watchdog' -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+    Start-Process -FilePath $exe
+
+    $deadline = (Get-Date).AddSeconds(60)
+    while ((Get-Date) -lt $deadline -and -not (Get-Process -Name 'NutstoreClient' -ErrorAction SilentlyContinue)) {
+        Start-Sleep -Seconds 1
+    }
+
+    $started = Get-Process -Name 'NutstoreClient' -ErrorAction SilentlyContinue
+    if (-not $started -or -not (Test-Alive)) {
+        throw '坚果云启动后没有保持运行 —— 请手动启动它，并检查是否有错误弹窗。'
+    }
+
+    Write-Host "  ✅ 已启动并保持运行（PID $($started.Id)，直接启动）" -ForegroundColor Green
+}
 
 # 等 MCP 端口
 Write-Host '  等待 MCP 端口 17321 …'
