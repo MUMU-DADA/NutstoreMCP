@@ -196,6 +196,9 @@ public interface IUiHook
     /// <summary>读某个沙箱的最新事件 ID。只读。</summary>
     string ReadLatestEventId(long sandboxId, long magic, string localRoot);
 
+    /// <summary>读取一页云端事件，不更新客户端本地事件数据库或未读状态。</summary>
+    string ReadRemoteEventsPage(long sandboxId, long magic, string localRoot, long cursor);
+
     /// <summary>
     /// 把云端文件的内容下载到本地路径。
     /// </summary>

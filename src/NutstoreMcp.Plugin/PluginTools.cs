@@ -2,6 +2,7 @@
 using NutstoreMcp.ClientBindings;
 using System.ComponentModel;
 using System.Diagnostics;
+using System.Globalization;
 using System.Text.Json;
 using ModelContextProtocol.Server;
 using NutstoreMcp.Plugin.Contract;
@@ -967,6 +968,64 @@ public sealed partial class PluginTools
             }, Indented);
         }
     }
+
+    [McpServerTool(Name = "nutstore_l3_remote_events_page", ReadOnly = false, Destructive = false, Idempotent = true, OpenWorld = true)]
+    [Description("读取某个同步文件夹的一页云端增量事件，不调用会写 EventDb/未读数的客户端下行入口。TLS LibCurl 错误回退时客户端可能把 ForceDisableLibCurl 设为 true；此工具因此可能修改本地传输配置。返回脱敏游标和原始 NDJSON 事件字符串，不返回会话头。cursor 用上一页的 cursorOut 继续，hasMore=true 时再请求下一页。")]
+    public static string L3RemoteEventsPage(
+        [Description("沙箱 ID")] long sandboxId,
+        [Description("沙箱的内部标识（magic）")] long magic,
+        [Description("页游标，首次使用 0；后续使用上一页返回的 cursorOut")] long cursor = 0)
+    {
+        var ui = PluginEntry.Ui;
+        if (ui is null) return UiUnavailable;
+        if (sandboxId <= 0 || magic <= 0 || cursor < 0)
+            return JsonSerializer.Serialize(new { ok = false, reason = "sandboxId / magic 必须为正数，cursor 必须为非负数。" }, Indented);
+
+        try
+        {
+            using var doc = JsonDocument.Parse(ui.ReadClientSyncFolders());
+            if (!doc.RootElement.TryGetProperty("sandboxes", out var list))
+                return JsonSerializer.Serialize(new { ok = false, reason = "读同步文件夹列表失败。" }, Indented);
+
+            string? root = null;
+            long? boundMagic = null;
+            foreach (var s in list.EnumerateArray())
+            {
+                var id = s.TryGetProperty("id", out var i) && long.TryParse(i.GetString(), out var parsed)
+                    ? parsed : 0;
+                if (id == sandboxId)
+                {
+                    root = s.TryGetProperty("localPath", out var lp) ? lp.GetString() : null;
+                    boundMagic = s.TryGetProperty("magic", out var m)
+                        && long.TryParse(m.GetString(), NumberStyles.None, CultureInfo.InvariantCulture, out var parsedMagic)
+                            ? parsedMagic : null;
+                    break;
+                }
+            }
+
+            if (string.IsNullOrWhiteSpace(root))
+                return JsonSerializer.Serialize(new
+                {
+                    ok = false,
+                    reason = $"沙箱 {sandboxId} 没有本地路径 —— 事件读取需要该沙箱已绑定到本地。",
+                }, Indented);
+
+            if (boundMagic != magic)
+                return JsonSerializer.Serialize(new { ok = false, reason = "magic 与客户端当前绑定的沙箱不匹配。" }, Indented);
+
+            return ui.ReadRemoteEventsPage(sandboxId, magic, root!, cursor);
+        }
+        catch (Exception ex)
+        {
+            return JsonSerializer.Serialize(new
+            {
+                ok = false,
+                reason = $"{ex.GetType().Name}: {ex.Message}",
+                note = "钩子没有 ReadRemoteEventsPage —— 需要重启客户端让新钩子生效。",
+            }, Indented);
+        }
+    }
+
     [McpServerTool(Name = "nutstore_l3_download", ReadOnly = false, Destructive = false, Idempotent = false, OpenWorld = true)]
     [Description("【默认只预演】把云端文件的内容下载到本地路径。能拿到**尚未同步到本地**的文件。会写本地磁盘（云端不改）。守卫：需要 l3-write.enabled、confirm=true、dryRun=false，且**目标文件已存在一律拒绝**（绝不覆盖）。")]
     public static string L3Download(

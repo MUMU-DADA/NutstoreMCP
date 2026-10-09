@@ -4,7 +4,7 @@ namespace NutstoreMcp.ClientBindings;
 internal static class ClientSymbols
 {
     public const string VerifiedClientVersion = "7.2.12.0";
-    public const string BaselineFileName = "baseline-7.2.12-guard.json";
+    public const string BaselineFileName = "baseline-7.2.12-events-transport.json";
     public const string CloudOpsAssembly = "NutstoreClient.Legacy.dll";
     public const string CloudOpsType = "A.c3795a089d76f103f11c4fe70f38ac8ca";
     public const string CommonAssembly = "Nutstore.Common.dll";
@@ -23,6 +23,19 @@ internal static class ClientSymbols
     public const string CompressionMethodType = "NutstoreClient.Connection.CompressionMethod";
     public const string HashAlgorithmsType = "Nutstore.Common.Helpers.HashAlgorithms";
     public const string RequestExceptionType = "NutstoreClient.Connection.RequestException";
+    public const string NutstoreRequestType = "NutstoreClient.Connection.NutstoreRequest";
+    public const string NutstoreNetManagerType = "NutstoreClient.Connection.NutstoreNetManager";
+    public const string HttpWebResponseShimType = "NutstoreClient.Connection.Shims.HttpWebResponseShim";
+    public const string ReadWriteTimeoutSafeStreamType = NutstoreNetManagerType + "+ReadWriteTimeoutSafeStream";
+    public const string MakeGetEventsRequest = "MakeGetEventsRequest";
+    public const string SendHttpRequest = "SendHttpRequest";
+    public const string GetResponseStream = "GetResponseStream";
+    public const string StatusCodeMember = "StatusCode";
+    public const string ContentTypeMember = "ContentType";
+    public const string ContentEncodingMember = "ContentEncoding";
+    public const string HeadersMember = "Headers";
+    public const string LatestEventHeader = "x-latest-event";
+    public const string MoreDataHeader = "x-more-data";
     public const int CloudPathMaxUtf8Bytes = 767;
     public const int SyncErrorUnknown = 0;
     public const int SyncErrorFileSizeLimit = 1;
@@ -112,6 +125,20 @@ internal static class ClientSymbols
             "读取事件且写 EventDb、未读数和最近页；未开放", "local-write"),
         Entry(nameof(SessionHeaderHelper), SessionHeaderHelper,
             "生成客户端会话请求头；仅专用默认域内部使用，禁止桥导出", "forbidden"),
+        Support("GetEventsRequest", CloudOpsAssembly, NutstoreRequestType, MakeGetEventsRequest,
+            "method", "read"),
+        Support("SendHttpRequest", CloudOpsAssembly, NutstoreNetManagerType, SendHttpRequest,
+            "method", "local-write"),
+        Support("ResponseStream", CloudOpsAssembly, HttpWebResponseShimType, GetResponseStream,
+            "method", "read"),
+        Support("ResponseStatusCode", CloudOpsAssembly, HttpWebResponseShimType, StatusCodeMember,
+            "property", "read"),
+        Support("ResponseContentType", CloudOpsAssembly, HttpWebResponseShimType, ContentTypeMember,
+            "property", "read"),
+        Support("ResponseContentEncoding", CloudOpsAssembly, HttpWebResponseShimType, ContentEncodingMember,
+            "property", "read"),
+        Support("ResponseHeaders", CloudOpsAssembly, HttpWebResponseShimType, HeadersMember,
+            "property", "read"),
         Entry(nameof(DeleteSandbox), DeleteSandbox, "删除整个云端沙箱；禁止调用", "forbidden"),
         Entry(nameof(DeleteObject), DeleteObject, "删除云端对象；禁止调用", "forbidden"),
         new ClientSymbol(nameof(CloudPathMaxUtf8Bytes), CloudOpsAssembly, NutstorePathType,

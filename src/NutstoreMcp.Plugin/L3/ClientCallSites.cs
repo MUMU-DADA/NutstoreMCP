@@ -129,6 +129,27 @@ internal static class ClientCallSites
             Why: "纯读。只按 NSSandbox 查询当前同步游标，不推进游标、不写任何东西。"),
 
         new(
+            ClientSymbols.NutstoreRequestType,
+            ClientSymbols.MakeGetEventsRequest,
+            "构造 GET /cmd/getEventsV4 事件请求",
+            Mutates: false,
+            Why: "纯读。只创建客户端请求对象，不发请求、不写 EventDb；会话头只在默认域局部传递，绝不经桥返回。"),
+
+        new(
+            ClientSymbols.NutstoreNetManagerType,
+            ClientSymbols.SendHttpRequest,
+            "发送 GET /cmd/getEventsV4 事件请求",
+            Mutates: true,
+            Why: "远端只读，但 TLS LibCurl 错误回退可能把 NsConfig.ForceDisableLibCurl 设为 true，属于客户端配置副作用；专用调用不调用 EventDAO、不推进本地游标，也不导出响应对象或会话头。"),
+
+        new(
+            ClientSymbols.HttpWebResponseShimType,
+            ClientSymbols.GetResponseStream,
+            "读取事件响应正文流",
+            Mutates: false,
+            Why: "纯读。只读取已返回的 HTTP 正文流；钩子在解析后关闭响应，不写客户端本地状态。"),
+
+        new(
             CloudOpsType,
             ClientSymbols.DownloadContent,
             "下载云端文件内容（DownloadCloudFile）",
