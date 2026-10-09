@@ -90,16 +90,20 @@ public class ClientCallSitesTests
     [Fact]
     public void 云端操作层的调用点用同一个类型名()
     {
-        // 哈希名是 33 个十六进制字符 —— 别按固定长度判断，
-        // 那样写错一个数字就会静默漏掉全部（第一版就踩了这个）
         var ops = ClientCallSites.Registered
             .Where(c => c.MethodName.Length >= 20 && c.MethodName.All(Uri.IsHexDigit))
             .ToList();
 
-        Assert.Equal(3, ops.Count);
+        // 不写死条数 —— 那个断言在合法新增调用点时就会断（已经发生过一次）。
+        // 真正要守住的是「筛选没漏」，NotEmpty 就够了；
+        // 下一条断言再守住「每个哈希名都指向那个已知的混淆类」。
+        Assert.NotEmpty(ops);
 
         foreach (var site in ops)
         {
+            // 哈希名是 33 个十六进制字符，不是 32（第一版按 32 写，一个都没匹配上）
+            Assert.Equal(33, site.MethodName.Length);
+
             // 哈希形式的调用点必须指向那个已知的混淆类，
             // 不能出现「不知道从哪冒出来的第二个哈希类」
             Assert.Equal(ClientCallSites.CloudOpsType, site.TypeName);

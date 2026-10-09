@@ -1346,6 +1346,270 @@ public sealed class UiHook : MarshalByRefObject, IUiHook
         throw new ArgumentException($"不支持的设置项类型 {targetType.Name}");
     }
 
+    /// <summary>
+    /// 在云端按关键词搜索。只读。
+    /// </summary>
+    /// <remarks>
+    /// 目标：c7a517b89b338a47fe91fa3ec2a0823c3(string) → SearchResponse
+    ///   SearchResponse.Results : List&lt;SearchSandboxInfo&gt;
+    ///     SearchSandboxInfo { ResultType, SandboxId, Children }
+    ///       Children : List&lt;SearchFileInfo&gt; { Path, IsDir, ModifyTime }
+    /// </remarks>
+    public string SearchCloud(string keyword)
+    {
+        try
+        {
+            if (string.IsNullOrWhiteSpace(keyword))
+            {
+                return Json.Obj(("ok", false), ("reason", "搜索关键词为空"));
+            }
+
+            var api = FindClientType(CloudOpsTypeName);
+            if (api is null)
+            {
+                return Json.Obj(("ok", false), ("reason", "找不到客户端的云端操作层（版本可能变了）"));
+            }
+
+            var method = api.GetMethod(
+                "c7a517b89b338a47fe91fa3ec2a0823c3",
+                BindingFlags.Public | BindingFlags.Static,
+                binder: null,
+                types: new[] { typeof(string) },
+                modifiers: null);
+
+            if (method is null)
+            {
+                return Json.Obj(("ok", false), ("reason", "找不到搜索方法（混淆名可能变了）"));
+            }
+
+            var response = method.Invoke(null, new object[] { keyword });
+            if (response is null)
+            {
+                return Json.Obj(("ok", false), ("reason", "客户端返回 null"));
+            }
+
+            var results = Prop(response, "Results") as System.Collections.IEnumerable;
+
+            var groups = new List<string>();
+            var matched = 0;
+            var files = 0;
+
+            if (results is not null)
+            {
+                foreach (var group in results)
+                {
+                    if (group is null)
+                    {
+                        continue;
+                    }
+
+                    matched++;
+
+                    var children = new List<string>();
+                    if (Prop(group, "Children") is System.Collections.IEnumerable kids)
+                    {
+                        foreach (var kid in kids)
+                        {
+                            if (kid is null)
+                            {
+                                continue;
+                            }
+
+                            files++;
+                            children.Add(Json.Obj(
+                                ("path", Prop(kid, "Path")?.ToString()),
+                                ("isDir", (Prop(kid, "IsDir") as bool? ?? false) ? "true" : "false"),
+                                ("modifyTime", Prop(kid, "ModifyTime")?.ToString())));
+                        }
+                    }
+
+                    groups.Add(Json.Obj(
+                        ("sandboxId", Prop(group, "SandboxId")?.ToString()),
+                        ("resultType", Prop(group, "ResultType")?.ToString()),
+                        ("fileCount", children.Count.ToString()),
+                        ("files", new Json.Raw("[" + string.Join(",", children) + "]"))));
+                }
+            }
+
+            return Json.Obj(
+                ("ok", true),
+                ("domain", AppDomain.CurrentDomain.FriendlyName),
+                ("keyword", keyword),
+                ("groupCount", matched.ToString()),
+                ("fileCount", files.ToString()),
+                ("groups", new Json.Raw("[" + string.Join(",", groups) + "]")));
+        }
+        catch (Exception ex)
+        {
+            // 免费账号不支持搜索 —— 这是功能限制，不是故障。
+            // 直接抛 TargetInvocationException 会让调用方以为是我们的 bug。
+            var text = Chain(ex);
+            var joined = string.Join(" | ", text);
+
+            // net48 没有 string.Contains(string, StringComparison)，只能用 IndexOf
+            if (joined.IndexOf("DisabledForFreeUser", StringComparison.OrdinalIgnoreCase) >= 0
+                || joined.IndexOf("disabled for free user", StringComparison.OrdinalIgnoreCase) >= 0)
+            {
+                return Json.Obj(
+                    ("ok", false),
+                    ("reason", "搜索是坚果云的付费功能，当前账号是免费版，服务端拒绝了这次请求。"),
+                    ("errorCode", "DisabledForFreeUser"),
+                    ("isFeatureLimit", true));
+            }
+
+            return Json.Obj(
+                ("ok", false),
+                ("reason", ex.GetType().Name + ": " + ex.Message),
+                ("chain", Json.StringArray(text)));
+        }
+    }
+    /// <remarks>
+    /// 目标：cf22046b2931cec246e3a4f4b994e6c84() → UserMeteringBean
+    ///   { UsedStorageSize, TotalStorageSize, FreeDownRate, FreeUpRate,
+    ///     UsedUpRate, UsedDownRate, IsPaidUser, IsInTeam,
+    ///     AccountExpireLeftTime, RateResetLeftMills }
+    /// </remarks>
+    public string ReadAccountUsage()
+    {
+        try
+        {
+            var api = FindClientType(CloudOpsTypeName);
+            if (api is null)
+            {
+                return Json.Obj(("ok", false), ("reason", "找不到客户端的云端操作层（版本可能变了）"));
+            }
+
+            var method = api.GetMethod(
+                "cf22046b2931cec246e3a4f4b994e6c84",
+                BindingFlags.Public | BindingFlags.Static,
+                binder: null,
+                types: Type.EmptyTypes,
+                modifiers: null);
+
+            if (method is null)
+            {
+                return Json.Obj(("ok", false), ("reason", "找不到用量方法（混淆名可能变了）"));
+            }
+
+            var bean = method.Invoke(null, null);
+            if (bean is null)
+            {
+                return Json.Obj(("ok", false), ("reason", "客户端返回 null"));
+            }
+
+            var used = AsLong(Prop(bean, "UsedStorageSize"));
+            var total = AsLong(Prop(bean, "TotalStorageSize"));
+
+            // 字节 → 人类可读。同时保留原始字节数，免得调用方要反推。
+            //
+            // 注意：免费账号的 TotalStorageSize 是 0 —— 坚果云免费版不按容量计费，
+            // 而是限制每月的上传/下载流量（1GB / 3GB）。所以这里不能只报
+            // 「0 B / 0 B」，那会让调用方以为读失败了。真正有意义的是 rates。
+            var quotaReported = total > 0;
+
+            var freeUp = AsLong(Prop(bean, "FreeUpRate"));
+            var freeDown = AsLong(Prop(bean, "FreeDownRate"));
+            var usedUp = AsLong(Prop(bean, "UsedUpRate"));
+            var usedDown = AsLong(Prop(bean, "UsedDownRate"));
+            var resetMills = AsLong(Prop(bean, "RateResetLeftMills"));
+
+            return Json.Obj(
+                ("ok", true),
+                ("domain", AppDomain.CurrentDomain.FriendlyName),
+                ("isPaidUser", (Prop(bean, "IsPaidUser") as bool? ?? false) ? "true" : "false"),
+                ("isInTeam", (Prop(bean, "IsInTeam") as bool? ?? false) ? "true" : "false"),
+                ("accountExpireLeftTime", Prop(bean, "AccountExpireLeftTime")?.ToString()),
+
+                // 容量：免费账号不报，明确说出来而不是报 0
+                ("storage", quotaReported
+                    ? Json.Obj(
+                        ("reported", "true"),
+                        ("usedBytes", used.ToString()),
+                        ("totalBytes", total.ToString()),
+                        ("used", Human(used)),
+                        ("total", Human(total)),
+                        ("usedPercent", Math.Round(used * 100.0 / total, 2).ToString(CultureInfo.InvariantCulture)))
+                    : Json.Obj(
+                        ("reported", "false"),
+                        ("note", "该账号不按容量计费，服务端没有返回容量配额。"
+                               + "免费版限制的是每月流量，见 rates。"))),
+
+                // 流量：这才是免费版真正要看的
+                ("rates", Json.Obj(
+                    ("upload", Json.Obj(
+                        ("usedBytes", usedUp.ToString()),
+                        ("quotaBytes", freeUp.ToString()),
+                        ("used", Human(usedUp)),
+                        ("quota", Human(freeUp)),
+                        ("remaining", Human(Math.Max(0, freeUp - usedUp))))),
+                    ("download", Json.Obj(
+                        ("usedBytes", usedDown.ToString()),
+                        ("quotaBytes", freeDown.ToString()),
+                        ("used", Human(usedDown)),
+                        ("quota", Human(freeDown)),
+                        ("remaining", Human(Math.Max(0, freeDown - usedDown))))),
+                    ("resetsInMills", resetMills.ToString()),
+                    ("resetsIn", resetMills > 0
+                        ? $"{Math.Round(resetMills / 86400000.0, 1).ToString(CultureInfo.InvariantCulture)} 天"
+                        : null))));
+        }
+        catch (Exception ex)
+        {
+            return Json.Obj(
+                ("ok", false),
+                ("reason", ex.GetType().Name + ": " + ex.Message),
+                ("chain", Json.StringArray(Chain(ex))));
+        }
+    }
+
+    /// <summary>读对象上的公开属性，取不到就返回 null（不抛）。</summary>
+    private static object? Prop(object target, string name)
+    {
+        try
+        {
+            return target.GetType()
+                .GetProperty(name, BindingFlags.Public | BindingFlags.Instance)
+                ?.GetValue(target);
+        }
+        catch (Exception)
+        {
+            return null;
+        }
+    }
+
+    private static long AsLong(object? value)
+    {
+        try
+        {
+            return value is null ? 0L : Convert.ToInt64(value, CultureInfo.InvariantCulture);
+        }
+        catch (Exception)
+        {
+            return 0L;
+        }
+    }
+
+    /// <summary>字节数转人类可读。只用于展示，原始字节数同时保留在输出里。</summary>
+    private static string Human(long bytes)
+    {
+        string[] units = ["B", "KB", "MB", "GB", "TB", "PB"];
+        double v = bytes;
+        var i = 0;
+
+        while (v >= 1024 && i < units.Length - 1)
+        {
+            v /= 1024;
+            i++;
+        }
+
+        return i == 0
+            ? $"{bytes} B"
+            : $"{Math.Round(v, 2).ToString(CultureInfo.InvariantCulture)} {units[i]}";
+    }
+
+    /// <summary>客户端云端操作层的混淆类名。名字是哈希，只能按字面量定位。</summary>
+    private const string CloudOpsTypeName = "A.c3795a089d76f103f11c4fe70f38ac8ca";
+
     private static List<string> Chain(Exception ex)
     {
         var result = new List<string>();

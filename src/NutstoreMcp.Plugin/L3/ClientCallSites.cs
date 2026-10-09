@@ -65,6 +65,20 @@ internal static class ClientCallSites
             Mutates: true,
             Why: "已定位但没接出来。登记在这里是为了说明：以后要用它，"
                + "必须重新走一遍「确认它改什么」的流程，不能因为它已在清单里就直接调。"),
+
+        new(
+            CloudOpsType,
+            "c7a517b89b338a47fe91fa3ec2a0823c3",
+            "在云端按关键词搜索（SearchCloud）",
+            Mutates: false,
+            Why: "纯读。只发一次搜索请求，把结果映射成路径字符串。"),
+
+        new(
+            CloudOpsType,
+            "cf22046b2931cec246e3a4f4b994e6c84",
+            "读账号容量与流量用量（ReadAccountUsage）",
+            Mutates: false,
+            Why: "纯读。不带参数，只取账号的容量与流量统计，不写任何东西。"),
     ];
 
     /// <summary>按方法名查登记项。</summary>

@@ -160,4 +160,10 @@ public interface IUiHook
     /// 调用方必须已完成放行判断并选定风险层级；本方法只负责执行。
     /// </remarks>
     string WriteClientSetting(string name, string value);
+
+    /// <summary>在云端按关键词搜索。只读。</summary>
+    string SearchCloud(string keyword);
+
+    /// <summary>读账号的容量与流量用量。只读。</summary>
+    string ReadAccountUsage();
 }

@@ -69,7 +69,13 @@ if (-not $SkipInstall) {
                 $text = [System.Text.Encoding]::ASCII.GetString($bytes)
 
                 # 这两个方法是本轮新增的，出现即说明新契约已经落盘
-                if ($text.Contains('ReadClientSettings') -and $text.Contains('WriteClientSetting')) {
+                # 这些是插件目录当前契约里的方法名，全部出现才算装好。
+                # **每次加新的钩子方法都要同步更新这里** —— 否则轮询会拿旧契约
+                # 立刻通过，然后在客户端启动之后才发现调用失败。
+                $required = @('ReadClientSettings', 'WriteClientSetting', 'SearchCloud', 'ReadAccountUsage')
+                $missing = @($required | Where-Object { -not $text.Contains($_) })
+
+                if ($missing.Count -eq 0) {
                     $installed = $true
                     break
                 }
@@ -119,7 +125,16 @@ if ($LASTEXITCODE -ne 0) {
 }
 else {
     & schtasks.exe /Run /TN $taskName 2>&1 | Out-Null
-    Start-Sleep -Seconds 6
+
+    # 等进程真的起来再删任务。
+    # 一开始是「运行 → 睡 6 秒 → 删」——那样会把正在启动的实例一起掐掉，
+    # 现象是「脚本说已启动，实际一个客户端进程都没有」。
+    $deadline0 = (Get-Date).AddSeconds(60)
+    while ((Get-Date) -lt $deadline0 `
+           -and -not (Get-Process -Name 'NutstoreClient' -ErrorAction SilentlyContinue)) {
+        Start-Sleep -Seconds 2
+    }
+
     & schtasks.exe /Delete /TN $taskName /F 2>&1 | Out-Null
 }
 

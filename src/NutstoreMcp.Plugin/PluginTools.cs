@@ -589,6 +589,56 @@ public sealed class PluginTools
         }
     }
 
+    [McpServerTool(Name = "nutstore_l3_search", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = true)]
+    [Description("在云端按关键词搜索文件和文件夹（走客户端自己的实现）。只读，不需要解锁令牌。返回按同步文件夹分组的结果，每组含 sandboxId 和文件列表（路径、是否目录、修改时间）。")]
+    public static string L3Search([Description("搜索关键词")] string keyword)
+    {
+        var ui = PluginEntry.Ui;
+        if (ui is null)
+        {
+            return UiUnavailable;
+        }
+
+        try
+        {
+            return ui.SearchCloud(keyword);
+        }
+        catch (Exception ex)
+        {
+            return JsonSerializer.Serialize(new
+            {
+                ok = false,
+                reason = $"{ex.GetType().Name}: {ex.Message}",
+                note = "钩子没有 SearchCloud —— 需要重启客户端让新钩子生效。",
+            }, Indented);
+        }
+    }
+
+    [McpServerTool(Name = "nutstore_l3_usage", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = true)]
+    [Description("读坚果云账号的容量与流量用量（走客户端自己的实现）。只读，不需要解锁令牌。返回已用/总容量（字节与人类可读两种）、账号类型、以及上传下载流量余量。")]
+    public static string L3Usage()
+    {
+        var ui = PluginEntry.Ui;
+        if (ui is null)
+        {
+            return UiUnavailable;
+        }
+
+        try
+        {
+            return ui.ReadAccountUsage();
+        }
+        catch (Exception ex)
+        {
+            return JsonSerializer.Serialize(new
+            {
+                ok = false,
+                reason = $"{ex.GetType().Name}: {ex.Message}",
+                note = "钩子没有 ReadAccountUsage —— 需要重启客户端让新钩子生效。",
+            }, Indented);
+        }
+    }
+
     [McpServerTool(Name = "nutstore_client_search_types", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
     [Description("按名字子串搜索坚果云客户端的所有类型（跨全部程序集）。用于在不知道类型全名时定位 API。只读，不执行任何客户端代码。")]
     public static string ClientSearchTypes(
