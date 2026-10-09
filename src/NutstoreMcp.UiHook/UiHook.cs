@@ -1610,6 +1610,250 @@ public sealed class UiHook : MarshalByRefObject, IUiHook
     /// <summary>客户端云端操作层的混淆类名。名字是哈希，只能按字面量定位。</summary>
     private const string CloudOpsTypeName = "A.c3795a089d76f103f11c4fe70f38ac8ca";
 
+    /// <summary>
+    /// 读账号信息。只读。
+    /// </summary>
+    /// <remarks>
+    /// 目标：cc244cf7442842e41dd4ffb0830aeb3f3() → UserInfoBean
+    ///
+    /// **注意这个 bean 用的是字段（小写），不是属性** ——
+    /// nickName / userChannel / isPaidUser / usedStorageSize ...
+    /// 所以不能只按属性找。
+    ///
+    /// webdomain 与 cometSubServer 是客户端的基础设施端点，不导出 ——
+    /// 对调用方没用，且属于不该外传的内部信息。
+    /// </remarks>
+    public string ReadUserInfo()
+    {
+        try
+        {
+            var api = FindClientType(CloudOpsTypeName);
+            if (api is null)
+            {
+                return Json.Obj(("ok", false), ("reason", "找不到客户端的云端操作层（版本可能变了）"));
+            }
+
+            var method = api.GetMethod(
+                "cc244cf7442842e41dd4ffb0830aeb3f3",
+                BindingFlags.Public | BindingFlags.Static,
+                binder: null,
+                types: Type.EmptyTypes,
+                modifiers: null);
+
+            if (method is null)
+            {
+                return Json.Obj(("ok", false), ("reason", "找不到账号信息方法（混淆名可能变了）"));
+            }
+
+            var bean = method.Invoke(null, null);
+            if (bean is null)
+            {
+                return Json.Obj(("ok", false), ("reason", "客户端返回 null"));
+            }
+
+            var used = AsLong(Get(bean, "usedStorageSize"));
+            var total = AsLong(Get(bean, "totalStorageSize"));
+
+            return Json.Obj(
+                ("ok", true),
+                ("domain", AppDomain.CurrentDomain.FriendlyName),
+                ("nickName", Get(bean, "nickName")?.ToString()),
+                ("userChannel", Get(bean, "userChannel")?.ToString()),
+                ("isPaidUser", BoolText(Get(bean, "isPaidUser"))),
+                ("isInTeam", BoolText(Get(bean, "isInTeam"))),
+                ("onlineEdit", BoolText(Get(bean, "onlineEdit"))),
+                ("accountExpireLeftTime", Get(bean, "accountExpireLeftTime")?.ToString()),
+                ("storage", total > 0
+                    ? Json.Obj(
+                        ("reported", "true"),
+                        ("used", Human(used)),
+                        ("total", Human(total)),
+                        ("usedPercent", Math.Round(used * 100.0 / total, 2).ToString(CultureInfo.InvariantCulture)))
+                    : Json.Obj(("reported", "false"), ("note", "该账号不按容量计费，见 nutstore_l3_usage 的流量额度。"))));
+        }
+        catch (Exception ex)
+        {
+            return Json.Obj(
+                ("ok", false),
+                ("reason", ex.GetType().Name + ": " + ex.Message),
+                ("chain", Json.StringArray(Chain(ex))));
+        }
+    }
+
+    /// <summary>
+    /// 读某个同步文件夹的详情与权限。只读。
+    /// </summary>
+    /// <remarks>
+    /// 合并两个调用：
+    ///   c083e3da23c3bbf0c707145cd9efea279(SandboxIdentifier) → SyncFolderDetailBean
+    ///   c3c96725a92962d165d900554f645b220(SandboxIdentifier) → PathPermsBean { pathPerms }
+    /// 它们要同一个入参，分开调没有意义。
+    /// </remarks>
+    public string ReadSyncFolderDetail(long sandboxId, long magic)
+    {
+        try
+        {
+            if (sandboxId <= 0 || magic <= 0)
+            {
+                return Json.Obj(("ok", false), ("reason", "sandboxId / magic 必须为正数"));
+            }
+
+            var api = FindClientType(CloudOpsTypeName);
+            var idType = FindClientType("Nutstore.Common.SandboxIdentifier");
+
+            if (api is null || idType is null)
+            {
+                return Json.Obj(("ok", false), ("reason", "找不到云端操作层或 SandboxIdentifier（版本可能变了）"));
+            }
+
+            var identifier = Activator.CreateInstance(idType, sandboxId, magic);
+            if (identifier is null)
+            {
+                return Json.Obj(("ok", false), ("reason", "SandboxIdentifier 构造失败"));
+            }
+
+            var call = new object[] { identifier };
+
+            // ── 详情 ──
+            var detailMethod = api.GetMethod(
+                "c083e3da23c3bbf0c707145cd9efea279",
+                BindingFlags.Public | BindingFlags.Static,
+                binder: null, types: new[] { idType }, modifiers: null);
+
+            string? detailJson = null;
+            string? detailError = null;
+
+            if (detailMethod is null)
+            {
+                detailError = "找不到详情方法（混淆名可能变了）";
+            }
+            else
+            {
+                try
+                {
+                    var d = detailMethod.Invoke(null, call);
+                    if (d is null)
+                    {
+                        detailError = "客户端返回 null";
+                    }
+                    else
+                    {
+                        detailJson = Json.Obj(
+                            ("name", Get(d, "Name")?.ToString()),
+                            ("desc", Get(d, "Desc")?.ToString()),
+                            ("owner", Get(d, "Owner")?.ToString()),
+                            ("isOwner", BoolText(Get(d, "IsOwner"))),
+                            ("isDefault", BoolText(Get(d, "IsDefault"))),
+                            ("exclusive", BoolText(Get(d, "Exclusive"))),
+                            ("doNotSync", BoolText(Get(d, "DoNotSync"))),
+                            ("isPhotoBucket", BoolText(Get(d, "IsPhotoBucket"))),
+                            ("permission", Get(d, "Permission")?.ToString()),
+                            ("usedStorageBytes", Get(d, "UsedStorage")?.ToString()),
+                            ("usedStorage", Human(AsLong(Get(d, "UsedStorage")))));
+                    }
+                }
+                catch (Exception ex)
+                {
+                    detailError = (ex.InnerException ?? ex).Message;
+                }
+            }
+
+            // ── 权限 ──
+            var permsMethod = api.GetMethod(
+                "c3c96725a92962d165d900554f645b220",
+                BindingFlags.Public | BindingFlags.Static,
+                binder: null, types: new[] { idType }, modifiers: null);
+
+            var perms = new List<string>();
+            string? permsError = null;
+
+            if (permsMethod is null)
+            {
+                permsError = "找不到权限方法（混淆名可能变了）";
+            }
+            else
+            {
+                try
+                {
+                    var p = permsMethod.Invoke(null, call);
+
+                    // PathPermsBean 也是字段：pathPerms : List<CapsOnPathBean>{ Path, Caps }
+                    if (Get(p, "pathPerms") is System.Collections.IEnumerable list)
+                    {
+                        foreach (var item in list)
+                        {
+                            if (item is null)
+                            {
+                                continue;
+                            }
+
+                            perms.Add(Json.Obj(
+                                ("path", Get(item, "Path")?.ToString()),
+                                ("caps", Get(item, "Caps")?.ToString())));
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    permsError = (ex.InnerException ?? ex).Message;
+                }
+            }
+
+            return Json.Obj(
+                ("ok", detailJson is not null || perms.Count > 0),
+                ("domain", AppDomain.CurrentDomain.FriendlyName),
+                ("sandboxId", sandboxId.ToString(CultureInfo.InvariantCulture)),
+                ("detail", detailJson is null ? null : new Json.Raw(detailJson)),
+                ("detailError", detailError),
+                ("permCount", perms.Count.ToString(CultureInfo.InvariantCulture)),
+                ("permPaths", new Json.Raw("[" + string.Join(",", perms) + "]")),
+                ("permsError", permsError));
+        }
+        catch (Exception ex)
+        {
+            return Json.Obj(
+                ("ok", false),
+                ("reason", ex.GetType().Name + ": " + ex.Message),
+                ("chain", Json.StringArray(Chain(ex))));
+        }
+    }
+
+    private static string BoolText(object? v) => (v as bool? ?? false) ? "true" : "false";
+
+    /// <summary>
+    /// 按名字取对象的成员：先找属性，再找字段。
+    /// </summary>
+    /// <remarks>
+    /// **必须两者都找** —— 客户端里有两种风格：SyncFolderDetailBean 用属性，
+    /// UserInfoBean / PathPermsBean 用小写字段。只按属性找会静默拿到 null，
+    /// 输出里就是一片空白，看不出是「没有这个字段」还是「读失败」。
+    /// </remarks>
+    private static object? Get(object? target, string name)
+    {
+        if (target is null)
+        {
+            return null;
+        }
+
+        try
+        {
+            var t = target.GetType();
+
+            var prop = t.GetProperty(name, BindingFlags.Public | BindingFlags.Instance);
+            if (prop is not null)
+            {
+                return prop.GetValue(target);
+            }
+
+            var field = t.GetField(name, BindingFlags.Public | BindingFlags.Instance);
+            return field?.GetValue(target);
+        }
+        catch (Exception)
+        {
+            return null;
+        }
+    }
+
     private static List<string> Chain(Exception ex)
     {
         var result = new List<string>();

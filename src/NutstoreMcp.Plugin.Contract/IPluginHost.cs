@@ -166,4 +166,10 @@ public interface IUiHook
 
     /// <summary>读账号的容量与流量用量。只读。</summary>
     string ReadAccountUsage();
+
+    /// <summary>读账号信息（昵称、账号类型）。只读。</summary>
+    string ReadUserInfo();
+
+    /// <summary>读某个同步文件夹的详情与权限。只读。</summary>
+    string ReadSyncFolderDetail(long sandboxId, long magic);
 }

@@ -79,6 +79,27 @@ internal static class ClientCallSites
             "读账号容量与流量用量（ReadAccountUsage）",
             Mutates: false,
             Why: "纯读。不带参数，只取账号的容量与流量统计，不写任何东西。"),
+
+        new(
+            CloudOpsType,
+            "cc244cf7442842e41dd4ffb0830aeb3f3",
+            "读账号信息（ReadUserInfo）",
+            Mutates: false,
+            Why: "纯读。不带参数，只取账号的昵称与类型，不写任何东西。"),
+
+        new(
+            CloudOpsType,
+            "c083e3da23c3bbf0c707145cd9efea279",
+            "读同步文件夹详情（ReadSyncFolderDetail）",
+            Mutates: false,
+            Why: "纯读。只按 SandboxIdentifier 查询该沙箱的名称、所有者与占用，不写任何东西。"),
+
+        new(
+            CloudOpsType,
+            "c3c96725a92962d165d900554f645b220",
+            "读沙箱权限（ReadSyncFolderDetail）",
+            Mutates: false,
+            Why: "纯读。只按 SandboxIdentifier 查询各路径的权限位，不写任何东西。"),
     ];
 
     /// <summary>按方法名查登记项。</summary>

@@ -639,6 +639,58 @@ public sealed class PluginTools
         }
     }
 
+    [McpServerTool(Name = "nutstore_l3_user_info", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = true)]
+    [Description("读坚果云账号信息（昵称、账号类型、是否团队、在线编辑开关）。只读，不需要解锁令牌。客户端的基础设施端点（webdomain 等）不导出。")]
+    public static string L3UserInfo()
+    {
+        var ui = PluginEntry.Ui;
+        if (ui is null)
+        {
+            return UiUnavailable;
+        }
+
+        try
+        {
+            return ui.ReadUserInfo();
+        }
+        catch (Exception ex)
+        {
+            return JsonSerializer.Serialize(new
+            {
+                ok = false,
+                reason = $"{ex.GetType().Name}: {ex.Message}",
+                note = "钩子没有 ReadUserInfo —— 需要重启客户端让新钩子生效。",
+            }, Indented);
+        }
+    }
+
+    [McpServerTool(Name = "nutstore_l3_sync_folder_detail", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = true)]
+    [Description("读某个同步文件夹的详情与权限（名称、描述、所有者、是否默认、是否独占、占用空间、以及各路径的权限）。只读，不需要解锁令牌。sandboxId 与 magic 从 nutstore_l3_sync_folders 取。")]
+    public static string L3SyncFolderDetail(
+        [Description("沙箱 ID")] long sandboxId,
+        [Description("沙箱的内部标识（magic）")] long magic)
+    {
+        var ui = PluginEntry.Ui;
+        if (ui is null)
+        {
+            return UiUnavailable;
+        }
+
+        try
+        {
+            return ui.ReadSyncFolderDetail(sandboxId, magic);
+        }
+        catch (Exception ex)
+        {
+            return JsonSerializer.Serialize(new
+            {
+                ok = false,
+                reason = $"{ex.GetType().Name}: {ex.Message}",
+                note = "钩子没有 ReadSyncFolderDetail —— 需要重启客户端让新钩子生效。",
+            }, Indented);
+        }
+    }
+
     [McpServerTool(Name = "nutstore_client_search_types", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
     [Description("按名字子串搜索坚果云客户端的所有类型（跨全部程序集）。用于在不知道类型全名时定位 API。只读，不执行任何客户端代码。")]
     public static string ClientSearchTypes(
