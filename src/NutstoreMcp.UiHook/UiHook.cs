@@ -1193,18 +1193,39 @@ public sealed class UiHook : MarshalByRefObject, IUiHook
             var before = valueProp.GetValue(item)?.ToString();
 
             // ── 写入 ──
-            // 优先用 SetValue(T)：它可能带额外的变更通知逻辑，
-            // 直接写 Value 属性可能绕过那些。取不到才退回属性写入。
-            var setValue = itemType.GetMethods(BindingFlags.Public | BindingFlags.Instance)
-                .FirstOrDefault(m => m.Name == "SetValue" && m.GetParameters().Length == 1);
+            // 必须走 Value 属性的 setter，不是 SetValue(T)。
+            //
+            // 反编译确认（ConfigureItem<T>）：
+            //   public T Value { set { if (值不同) { ...通知/回调... } } }
+            //   public void SetValue(T value) { 字段 = value; }      ← 只赋值
+            //
+            // SetValue 只写字段、不触发任何通知 —— 用它会出现「值变了但设置没生效」，
+            // 而且要等重启才看得出来。属性 setter 才是界面绑定走的那条路，
+            // 用它才等价于「在设置界面点一下」。
+            var writeVia = "Value 属性 setter";
+            var setter = valueProp.GetSetMethod();
 
-            if (setValue is not null)
+            if (setter is not null)
             {
-                setValue.Invoke(item, new[] { target });
+                valueProp.SetValue(item, target);
             }
             else
             {
-                valueProp.SetValue(item, target);
+                // 属性只读时才退回 SetValue —— 这种情况下没有通知可用
+                var setValue = itemType.GetMethods(BindingFlags.Public | BindingFlags.Instance)
+                    .FirstOrDefault(m => m.Name == "SetValue"
+                                      && m.GetParameters().Length == 1
+                                      && m.GetParameters()[0].ParameterType == valueProp.PropertyType);
+
+                if (setValue is null)
+                {
+                    return Json.Obj(
+                        ("ok", false),
+                        ("reason", $"{name} 既没有可写的 Value 属性，也没有匹配的 SetValue(T)"));
+                }
+
+                setValue.Invoke(item, new[] { target });
+                writeVia = "SetValue(T)（Value 属性只读，无通知）";
             }
 
             // ── 持久化 ──
@@ -1262,6 +1283,7 @@ public sealed class UiHook : MarshalByRefObject, IUiHook
                 ("before", before),
                 ("after", after),
                 ("target", value),
+                ("writeVia", writeVia),
                 ("autoSave", isAutoSave),
                 ("saveCalled", saveCalled),
                 ("saveError", saveError),
