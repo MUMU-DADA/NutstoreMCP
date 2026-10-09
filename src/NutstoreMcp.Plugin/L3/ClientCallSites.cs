@@ -137,6 +137,23 @@ internal static class ClientCallSites
             Why: "纯读。只按 NSSandbox 查询当前同步游标，不推进游标、不写任何东西。"),
 
         new(
+            CloudOpsType,
+            "c089b7574cb46db5e6d9bba4e0e0a6002",
+            "下载云端文件内容（DownloadCloudFile）",
+            Mutates: true,
+            Why: "云端只读，但**会写本地磁盘** —— 所以标为会改状态。"
+               + "本地写入由钩子用 FileMode.CreateNew 完成 —— 目标已存在就拒绝，绝不覆盖。"
+               + "实测 remoteVersion 必须是真实版本号（传 0 报 ObjectNotFound、传 -1 报 IllegalArgument），"
+               + "所以调用前先查对象详情拿版本。"),
+
+        new(
+            "NutstoreClient.Common.NutstorePath",
+            "FromNutstorePath",
+            "由云端路径构造 NutstorePath（DownloadCloudFile 的前置）",
+            Mutates: false,
+            Why: "纯读。只把云端路径和沙箱绑成一个对象，不发请求、不写任何东西。"),
+
+        new(
             "（通用）",
             "InvokeBridge",
             "通用反射桥 —— 让插件侧在不改钩子的前提下调用客户端实现",

@@ -981,6 +981,107 @@ public sealed class PluginTools
             }, Indented);
         }
     }
+    [McpServerTool(Name = "nutstore_l3_download", ReadOnly = false, Destructive = false, Idempotent = false, OpenWorld = true)]
+    [Description("【默认只预演】把云端文件的内容下载到本地路径。能拿到**尚未同步到本地**的文件。会写本地磁盘（云端不改）。守卫：需要 l3-write.enabled、confirm=true、dryRun=false，且**目标文件已存在一律拒绝**（绝不覆盖）。")]
+    public static string L3Download(
+        [Description("沙箱 ID")] long sandboxId,
+        [Description("沙箱的内部标识（magic）")] long magic,
+        [Description("云端路径，必须以 / 开头")] string cloudPath,
+        [Description("本地目标绝对路径（必须不存在，上级目录必须已存在）")] string destPath,
+        [Description("必须显式传 true 才可能执行")] bool confirm = false,
+        [Description("默认 true（只预演不执行）")] bool dryRun = true)
+    {
+        var ui = PluginEntry.Ui;
+        if (ui is null) return UiUnavailable;
+
+        try
+        {
+            var refusals = new List<string>();
+            var unlocked = PluginEntry.IsWriteUnlocked();
+
+            if (!unlocked)
+                refusals.Add("未解锁。把内容为 yes 的令牌文件放到 %LOCALAPPDATA%\\NutstoreMcp\\l3-write.enabled。");
+
+            if (!confirm) refusals.Add("调用方没有传 confirm=true。");
+
+            if (string.IsNullOrWhiteSpace(cloudPath) || !cloudPath.StartsWith("/", StringComparison.Ordinal))
+                refusals.Add("cloudPath 必须以 / 开头。");
+
+            if (string.IsNullOrWhiteSpace(destPath) || !Path.IsPathRooted(destPath))
+            {
+                refusals.Add("destPath 必须是绝对的本地路径。");
+            }
+            else
+            {
+                // 这个操作唯一可能丢数据的地方就是覆盖 —— 提前挡，给出清楚的拒绝
+                if (File.Exists(destPath))
+                    refusals.Add($"目标文件已存在，拒绝覆盖: {destPath}");
+
+                var parent = Path.GetDirectoryName(destPath);
+                if (string.IsNullOrEmpty(parent) || !Directory.Exists(parent))
+                    refusals.Add($"目标的上级目录不存在: {parent}");
+            }
+
+            // localRoot：NSSandbox 需要它
+            string? root = null;
+            using (var doc = JsonDocument.Parse(ui.ReadClientSyncFolders()))
+            {
+                if (doc.RootElement.TryGetProperty("sandboxes", out var list))
+                {
+                    foreach (var s in list.EnumerateArray())
+                    {
+                        var id = s.TryGetProperty("id", out var i) && long.TryParse(i.GetString(), out var pid) ? pid : 0;
+                        if (id == sandboxId)
+                        {
+                            root = s.TryGetProperty("localPath", out var lp) ? lp.GetString() : null;
+                            break;
+                        }
+                    }
+                }
+            }
+
+            if (string.IsNullOrWhiteSpace(root))
+                refusals.Add($"沙箱 {sandboxId} 没有本地路径 —— 下载需要该沙箱已绑定到本地。");
+
+            string? result = null;
+            var executed = false;
+
+            if (refusals.Count == 0 && !dryRun)
+            {
+                try
+                {
+                    result = ui.DownloadCloudFile(sandboxId, magic, root!, cloudPath, destPath);
+                    executed = true;
+                }
+                catch (Exception ex)
+                {
+                    refusals.Add($"调用客户端实现失败: {ex.GetType().Name}: {ex.Message}");
+                }
+            }
+
+            return JsonSerializer.Serialize(new
+            {
+                allowed = refusals.Count == 0,
+                wouldWrite = refusals.Count == 0 && !dryRun && executed,
+                dryRun,
+                unlockVariablePresent = unlocked,
+                probe = new { sandboxId, magic, cloudPath, destPath },
+                refusals,
+                notes = new[]
+                {
+                    "只写本地磁盘，云端不做任何修改。",
+                    "目标已存在一律拒绝 —— 这是本操作唯一可能造成数据丢失的地方。",
+                    "写入用 FileMode.CreateNew：即使判断和写入之间被人抢先建了文件，也不会覆盖。",
+                },
+                executed,
+                result,
+            }, Indented);
+        }
+        catch (Exception ex)
+        {
+            return Error(ex);
+        }
+    }
     [McpServerTool(Name = "nutstore_client_search_types", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
     [Description("按名字子串搜索坚果云客户端的所有类型（跨全部程序集）。用于在不知道类型全名时定位 API。只读，不执行任何客户端代码。")]
     public static string ClientSearchTypes(

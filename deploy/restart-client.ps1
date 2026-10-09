@@ -72,7 +72,7 @@ if (-not $SkipInstall) {
                 # 这些是插件目录当前契约里的方法名，全部出现才算装好。
                 # **每次加新的钩子方法都要同步更新这里** —— 否则轮询会拿旧契约
                 # 立刻通过，然后在客户端启动之后才发现调用失败。
-                $required = @('ReadClientSettings', 'WriteClientSetting', 'SearchCloud', 'ReadAccountUsage', 'ReadUserInfo', 'ReadSyncFolderDetail', 'ListFileVersions', 'ReadShareInfo', 'ReadContacts', 'InvokeBridge', 'ReadObjectDetail', 'ReadLatestEventId')
+                $required = @('ReadClientSettings', 'WriteClientSetting', 'SearchCloud', 'ReadAccountUsage', 'ReadUserInfo', 'ReadSyncFolderDetail', 'ListFileVersions', 'ReadShareInfo', 'ReadContacts', 'InvokeBridge', 'ReadObjectDetail', 'ReadLatestEventId', 'DownloadCloudFile')
                 $missing = @($required | Where-Object { -not $text.Contains($_) })
 
                 if ($missing.Count -eq 0) {

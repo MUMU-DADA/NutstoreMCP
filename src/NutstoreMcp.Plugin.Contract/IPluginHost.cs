@@ -209,4 +209,13 @@ public interface IUiHook
 
     /// <summary>读某个沙箱的最新事件 ID。只读。</summary>
     string ReadLatestEventId(long sandboxId, long magic, string localRoot);
+
+    /// <summary>
+    /// 把云端文件的内容下载到本地路径。
+    /// </summary>
+    /// <remarks>
+    /// **会写本地磁盘**（云端不改）。调用方必须先确认目标文件不存在。
+    /// 版本号由本方法内部查（对象详情），调用方不用管。
+    /// </remarks>
+    string DownloadCloudFile(long sandboxId, long magic, string localRoot, string cloudPath, string destPath);
 }

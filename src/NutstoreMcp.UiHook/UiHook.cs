@@ -2441,6 +2441,130 @@ public sealed class UiHook : MarshalByRefObject, IUiHook
         }
     }
 
+    /// <summary>
+    /// 把云端文件的内容下载到本地路径。
+    /// </summary>
+    /// <remarks>
+    /// 会写本地磁盘，云端不改。版本号必须显式给服务端 —— 实测传 0 会报
+    /// ObjectNotFound、传 -1 会报 IllegalArgument，所以这里先查对象详情拿真实版本。
+    ///
+    /// 目标已存在时**拒绝**（调用方应先确认），并且用独占方式创建 ——
+    /// 即使调用方判断和写入之间被人抢先建了文件，也不会覆盖。
+    /// </remarks>
+    public string DownloadCloudFile(
+        long sandboxId, long magic, string localRoot, string cloudPath, string destPath)
+    {
+        try
+        {
+            if (sandboxId <= 0 || magic <= 0)
+                return Json.Obj(("ok", false), ("reason", "sandboxId / magic 必须为正数"));
+
+            if (string.IsNullOrWhiteSpace(localRoot) || !Path.IsPathRooted(localRoot))
+                return Json.Obj(("ok", false), ("reason", "localRoot 必须是绝对的本地路径"));
+
+            if (string.IsNullOrWhiteSpace(cloudPath) || !cloudPath.StartsWith("/", StringComparison.Ordinal))
+                return Json.Obj(("ok", false), ("reason", "cloudPath 必须以 / 开头"));
+
+            if (string.IsNullOrWhiteSpace(destPath) || !Path.IsPathRooted(destPath))
+                return Json.Obj(("ok", false), ("reason", "destPath 必须是绝对的本地路径"));
+
+            // 目标已存在就拒绝 —— 这是这个操作唯一可能造成数据丢失的地方
+            if (File.Exists(destPath))
+                return Json.Obj(("ok", false), ("reason", "目标文件已存在，拒绝覆盖: " + destPath));
+
+            var parent = Path.GetDirectoryName(destPath);
+            if (string.IsNullOrEmpty(parent) || !Directory.Exists(parent))
+                return Json.Obj(("ok", false), ("reason", "目标的上级目录不存在: " + parent));
+
+            var api = FindClientType(CloudOpsTypeName);
+            if (api is null) return Json.Obj(("ok", false), ("reason", "找不到云端操作层（版本可能变了）"));
+
+            var box = BuildNSSandbox(sandboxId, magic, localRoot, out var boxError);
+            if (box is null) return Json.Obj(("ok", false), ("reason", boxError));
+
+            // NutstorePath.FromNutstorePath(NSSandbox, string) —— 这次是从云端路径构造
+            var nsPathType = FindClientType("NutstoreClient.Common.NutstorePath");
+            var fromCloud = nsPathType?.GetMethod(
+                "FromNutstorePath", BindingFlags.Public | BindingFlags.Static,
+                binder: null, types: new[] { box.GetType(), typeof(string) }, modifiers: null);
+
+            if (fromCloud is null) return Json.Obj(("ok", false), ("reason", "找不到 NutstorePath.FromNutstorePath"));
+
+            var nsPath = fromCloud.Invoke(null, new[] { box, cloudPath });
+            if (nsPath is null) return Json.Obj(("ok", false), ("reason", "构造 NutstorePath 返回 null"));
+
+            // ── 先查真实版本号 ──
+            var detailMethod = api.GetMethod(
+                "c55ca68332481ffab4014efe97582ac93",
+                BindingFlags.Public | BindingFlags.Static,
+                binder: null, types: new[] { box.GetType(), nsPathType! }, modifiers: null);
+
+            if (detailMethod is null) return Json.Obj(("ok", false), ("reason", "找不到对象详情方法"));
+
+            var bean = detailMethod.Invoke(null, new[] { box, nsPath });
+            if (bean is null) return Json.Obj(("ok", false), ("reason", "云端没有这个对象"));
+
+            var version = AsLong(Get(bean, "version"));
+            if (version <= 0)
+                return Json.Obj(("ok", false), ("reason", "拿到的版本号无效: " + version));
+
+            // ── 下载 ──
+            var downloadMethod = api.GetMethod(
+                "c089b7574cb46db5e6d9bba4e0e0a6002",
+                BindingFlags.Public | BindingFlags.Static,
+                binder: null,
+                types: new[]
+                {
+                    nsPathType!, typeof(long), typeof(long), typeof(bool).MakeByRefType(),
+                    FindClientType("NutstoreClient.Connection.GetRange")!, typeof(bool),
+                },
+                modifiers: null);
+
+            if (downloadMethod is null)
+                return Json.Obj(("ok", false), ("reason", "找不到下载方法（混淆名可能变了）"));
+
+            var args = new object?[] { nsPath, 0L, version, false, null, false };
+            var stream = downloadMethod.Invoke(null, args) as Stream;
+
+            if (stream is null)
+                return Json.Obj(("ok", false), ("reason", "下载返回的不是流"));
+
+            var fullDownload = args[3] as bool? ?? false;
+
+            long written;
+
+            try
+            {
+                // FileMode.CreateNew：即使上面判断和这里之间被人抢先建了文件，
+                // 也只会抛异常，不会覆盖
+                using (var output = new FileStream(destPath, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+                {
+                    stream.CopyTo(output);
+                    written = output.Length;
+                }
+            }
+            finally
+            {
+                try { stream.Dispose(); } catch (Exception) { }
+            }
+
+            return Json.Obj(
+                ("ok", true),
+                ("domain", AppDomain.CurrentDomain.FriendlyName),
+                ("cloudPath", cloudPath),
+                ("destPath", destPath),
+                ("version", version.ToString(CultureInfo.InvariantCulture)),
+                ("bytes", written.ToString(CultureInfo.InvariantCulture)),
+                ("size", Human(written)),
+                ("fullDownload", fullDownload ? "true" : "false"));
+        }
+        catch (Exception ex)
+        {
+            return Json.Obj(("ok", false), ("reason", ex.GetType().Name + ": " + ex.Message),
+                ("chain", Json.StringArray(Chain(ex))));
+        }
+    }
+
     private static string BoolText(object? v) => (v as bool? ?? false) ? "true" : "false";
 
     /// <summary>
