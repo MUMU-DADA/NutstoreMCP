@@ -12,6 +12,13 @@ public sealed partial class UiHook
 {
     private const int CapabilityMemberLimit = 200;
 
+    /// <summary>
+    /// 首轮创建文件的内容上限（256 KiB）。
+    /// 两个客户端阈值都在它之上：393216 字节以下才走全量上传，4 MiB 才分块算云端 hash。
+    /// 所以这个范围内「全量上传 + 单块 hash」两条路径都已在线核对过。
+    /// </summary>
+    private const int CapabilityMaxContentBytes = 262144;
+
     public string CreateCloudDirectory(long sandboxId, long magic, string localRoot, string cloudPath)
     {
         var attempted = false;
@@ -84,6 +91,262 @@ public sealed partial class UiHook
         {
             return CapabilityDirectoryFailure(cloudPath, "建目录检查失败：" + CapabilityError(ex), attempted);
         }
+    }
+
+    /// <summary>
+    /// 上传内容并发布为云端新文件。
+    /// </summary>
+    /// <remarks>
+    /// 安全性来自**调用方**：<c>cf02</c>（CreateFileMetadata）本体没有目标查重，
+    /// 也没有 noReplace，所以本方法假定目标路径已由调用方确认为「全新且父目录为空」。
+    /// 这里只额外做一次目标存在性检查当作纵深防御，不做覆盖判断。
+    ///
+    /// 只支持全量上传的小文件：客户端在 393216 字节以下走全量方案，云端 hash 的
+    /// 单块公式也已在 49 字节与 53 字节两个真实对象上核对过；多块与大文件未验证。
+    /// 空内容是另一条分支（跳过上传、块列表用 40 个零字节），同样未验证，一并拒绝。
+    /// </remarks>
+    public string CreateCloudFile(long sandboxId, long magic, string localRoot, string cloudPath, string base64Content)
+    {
+        var attempted = false;
+        var contentUploaded = false;
+        var metadataAttempted = false;
+        long? submittedVersion = null;
+        string? cloudHash = null;
+        var size = 0;
+        object? box = null;
+        object? path = null;
+        object? parent = null;
+        MethodInfo? readDetail = null;
+        MethodInfo? listDirectory = null;
+
+        try
+        {
+            var validation = CapabilityCheckArguments(sandboxId, magic, localRoot, cloudPath, allowRoot: false);
+            if (validation is not null)
+                return CapabilityCreateFailure(cloudPath, validation, attempted, contentUploaded, metadataAttempted);
+
+            byte[] bytes;
+            try
+            {
+                bytes = Convert.FromBase64String(base64Content ?? string.Empty);
+            }
+            catch (FormatException)
+            {
+                return CapabilityCreateFailure(cloudPath, "内容不是有效的 base64", attempted, contentUploaded, metadataAttempted);
+            }
+
+            size = bytes.Length;
+            if (size == 0)
+                return CapabilityCreateFailure(cloudPath, "空文件走另一条客户端分支，首轮不支持", attempted, contentUploaded, metadataAttempted);
+            if (size > CapabilityMaxContentBytes)
+                return CapabilityCreateFailure(cloudPath,
+                    "首轮只支持不超过 " + CapabilityMaxContentBytes + " 字节的内容（全量上传与单块 hash 都已验证的范围）",
+                    attempted, contentUploaded, metadataAttempted);
+
+            var api = FindClientType(CloudOpsTypeName)
+                ?? throw new CapabilityFailureException("找不到云端操作层");
+            box = BuildNSSandbox(sandboxId, magic, localRoot, out var boxError)
+                ?? throw new CapabilityFailureException(boxError);
+            path = CapabilityBuildPath(box, cloudPath);
+            var slash = cloudPath.LastIndexOf('/');
+            var parentPath = slash == 0 ? "/" : cloudPath.Substring(0, slash);
+            parent = CapabilityBuildPath(box, parentPath);
+
+            readDetail = CapabilityMethod(api, ClientSymbols.ReadObjectDetail, box.GetType(), path.GetType());
+            listDirectory = CapabilityMethod(api, ClientSymbols.ListDirectory, path.GetType(), typeof(string));
+
+            // 纵深防御：父目录必须是有效目录，目标必须不存在（含大小写别名）。
+            var parentDetail = readDetail.Invoke(null, new[] { box, parent });
+            if (parentDetail is null || CapabilityDeleted(parentDetail) || !CapabilityIsDirectory(parentDetail)
+                || !string.Equals(CapabilityBeanPath(parentDetail), parentPath, StringComparison.Ordinal))
+                return CapabilityCreateFailure(cloudPath, "父目录不存在或不是有效目录", attempted, contentUploaded, metadataAttempted);
+            if (CapabilityDirectoryPaths(listDirectory, parent)
+                .Any(p => string.Equals(p, cloudPath, StringComparison.OrdinalIgnoreCase)))
+                return CapabilityCreateFailure(cloudPath, "目标已存在（含大小写别名），拒绝发布。", attempted, contentUploaded, metadataAttempted);
+
+            var identifierType = FindClientType(ClientSymbols.SandboxIdentifierType)
+                ?? throw new CapabilityFailureException("找不到 SandboxIdentifier");
+            var compressionType = FindClientType(ClientSymbols.CompressionMethodType)
+                ?? throw new CapabilityFailureException("找不到 CompressionMethod");
+            var paramType = FindClientType(ClientSymbols.CreateFileParamType)
+                ?? throw new CapabilityFailureException("找不到 CreateFileParam");
+
+            var upload = CapabilityMethod(api, ClientSymbols.UploadFullContent,
+                identifierType, typeof(Stream), typeof(long), typeof(long), compressionType, typeof(string));
+            var create = CapabilityMethod(api, ClientSymbols.CreateFileMetadata, paramType);
+
+            cloudHash = CapabilityCloudHash(bytes);
+            var md5 = CapabilityUrlSafeMd5(bytes);
+
+            attempted = true;
+            var identifier = Activator.CreateInstance(identifierType, sandboxId, magic)
+                ?? throw new CapabilityFailureException("SandboxIdentifier 构造失败");
+            var compression = Enum.Parse(compressionType, "NONE");
+            object? uploaded;
+            using (var stream = new MemoryStream(bytes, writable: false))
+            {
+                uploaded = upload.Invoke(null, new[] { identifier, (object)stream, (object)(long)size, (object)(long)size, compression, md5 });
+            }
+
+            var contentName = uploaded is null ? null : CapabilityMember(uploaded, "name") as string;
+            if (string.IsNullOrWhiteSpace(contentName))
+                throw new CapabilityFailureException("上传没有返回内容对象标识");
+            contentUploaded = true;
+
+            var param = Activator.CreateInstance(paramType)
+                ?? throw new CapabilityFailureException("CreateFileParam 构造失败");
+            CapabilitySetMember(param, "path", path);
+            CapabilitySetMember(param, "size", (long)size);
+            CapabilitySetMember(param, "hashBase64", cloudHash);
+            CapabilitySetMember(param, "fullObjectNameBase64", contentName);
+            CapabilitySetMember(param, "blockListNameBase64", null);
+            CapabilitySetMember(param, "compressible", false);
+            CapabilitySetMember(param, "exAttr", null);
+
+            metadataAttempted = true;
+            var result = create.Invoke(null, new[] { param })
+                ?? throw new CapabilityFailureException("发布方法返回 null");
+            var version = CapabilityLong(CapabilityMember(result, "version"));
+            if (version <= 0) throw new CapabilityFailureException("发布结果没有有效版本号");
+            var resultPath = CapabilityMember(result, "path");
+            if (resultPath is null || !string.Equals(CapabilityPathText(resultPath), cloudPath, StringComparison.Ordinal))
+                throw new CapabilityFailureException("发布结果路径与请求不一致");
+            submittedVersion = version;
+        }
+        catch (Exception ex)
+        {
+            return CapabilityCreateFailure(cloudPath, "创建文件失败：" + CapabilityError(ex),
+                attempted, contentUploaded, metadataAttempted);
+        }
+
+        // 写后只读复查（默认域这一侧）；插件还会再复查一次。
+        var verification = CapabilityVerifyFile(readDetail!, listDirectory!, box!, path!, parent!,
+            cloudPath, size, cloudHash, submittedVersion);
+        var ok = verification.Ok;
+        return Json.Obj(
+            ("ok", ok),
+            ("attempted", attempted),
+            ("contentUploaded", contentUploaded),
+            ("metadataAttempted", metadataAttempted),
+            ("metadataSubmitted", submittedVersion is not null),
+            ("cloudPath", cloudPath),
+            ("size", size),
+            ("cloudHash", cloudHash),
+            ("version", submittedVersion),
+            ("verification", new Json.Raw(verification.Json)),
+            ("outcome", ok ? "created" : "unknown"),
+            ("reason", ok ? null : "已尝试发布，但没有同时确认调用成功与云端文件结果；只做只读复查，不重试、不回滚。"));
+    }
+
+    private static string CapabilityCreateFailure(string cloudPath, string reason, bool attempted,
+        bool contentUploaded, bool metadataAttempted)
+        => Json.Obj(("ok", false), ("attempted", attempted),
+            ("contentUploaded", contentUploaded), ("metadataAttempted", metadataAttempted),
+            ("metadataSubmitted", false), ("cloudPath", cloudPath),
+            ("outcome", attempted ? "unknown" : "refused"), ("reason", reason),
+            ("verification", new Json.Raw(Json.Obj(("ok", false), ("performed", false)))));
+
+    private static (bool Ok, string Json) CapabilityVerifyFile(MethodInfo readDetail, MethodInfo listDirectory,
+        object box, object path, object parent, string cloudPath, long size, string? cloudHash, long? submittedVersion)
+    {
+        object? detail = null;
+        List<string>? entries = null;
+        string? detailError = null;
+        string? listingError = null;
+        string? objectType = null;
+        string? observedHash = null;
+        long? observedSize = null;
+        long? observedVersion = null;
+        var directory = true;
+        var deleted = true;
+        var pathMatches = false;
+        try
+        {
+            detail = readDetail.Invoke(null, new[] { box, path });
+            if (detail is not null)
+            {
+                directory = CapabilityIsDirectory(detail);
+                deleted = CapabilityDeleted(detail);
+                objectType = CapabilityMember(detail, "objectType") as string;
+                observedHash = CapabilityMember(detail, "hash") as string;
+                observedSize = CapabilityMember(detail, "size") is { } rawSize ? CapabilityLong(rawSize) : null;
+                observedVersion = CapabilityLong(CapabilityMember(detail, "version"));
+                pathMatches = string.Equals(CapabilityBeanPath(detail), cloudPath, StringComparison.Ordinal);
+            }
+        }
+        catch (Exception ex) { detailError = CapabilityError(ex); }
+
+        try
+        {
+            entries = CapabilityDirectoryPaths(listDirectory, parent);
+        }
+        catch (Exception ex) { listingError = CapabilityError(ex); }
+
+        var matches = entries?.Where(p => string.Equals(p, cloudPath, StringComparison.OrdinalIgnoreCase)).ToList();
+        bool? listed = listingError is null && matches is not null
+            ? matches.Count == 1 && string.Equals(matches[0], cloudPath, StringComparison.Ordinal)
+            : null;
+        var detailKnown = detailError is null;
+        var sizeMatches = detailKnown && detail is not null && observedSize == size;
+        var hashMatches = detailKnown && detail is not null && cloudHash is not null
+            && string.Equals(observedHash, cloudHash, StringComparison.Ordinal);
+        var versionMatches = detailKnown && detail is not null && submittedVersion.HasValue
+            && observedVersion == submittedVersion;
+        var ok = detailError is null && listingError is null && detail is not null && !directory && !deleted
+            && pathMatches && listed == true && observedVersion > 0 && sizeMatches && hashMatches && versionMatches;
+        return (ok, Json.Obj(
+            ("ok", ok), ("performed", true),
+            ("exists", detailKnown ? detail is not null : null),
+            ("isDirectory", detailKnown && detail is not null ? directory : null),
+            ("deleted", detailKnown && detail is not null ? deleted : null),
+            ("pathMatches", detailKnown && detail is not null ? pathMatches : null),
+            ("listedInParent", listed), ("sameNameCount", matches?.Count),
+            ("objectType", detailKnown ? objectType : null),
+            ("size", observedSize), ("sizeMatches", detailKnown && detail is not null ? sizeMatches : null),
+            ("hashMatches", detailKnown && detail is not null ? hashMatches : null),
+            ("version", observedVersion), ("versionMatches", detailKnown && detail is not null ? versionMatches : null),
+            ("detailError", detailError), ("listingError", listingError)));
+    }
+
+    /// <summary>客户端的分块云端 hash：4 MiB 一块，单块时即 SHA256(SHA256(内容) || BE64(长度))。</summary>
+    private static string CapabilityCloudHash(byte[] bytes)
+    {
+        using var sha = System.Security.Cryptography.SHA256.Create();
+        var digest = sha.ComputeHash(bytes);
+        var record = new byte[40];
+        Buffer.BlockCopy(digest, 0, record, 0, digest.Length);
+        var length = BitConverter.GetBytes((long)bytes.Length);
+        if (BitConverter.IsLittleEndian) Array.Reverse(length);
+        Buffer.BlockCopy(length, 0, record, 32, 8);
+        return Convert.ToBase64String(sha.ComputeHash(record));
+    }
+
+    /// <summary>传输 MD5 用客户端自己的编码 helper，避免猜 URL-safe Base64 的 padding 规则。</summary>
+    private static string CapabilityUrlSafeMd5(byte[] bytes)
+    {
+        var hashType = FindClientType(ClientSymbols.HashAlgorithmsType)
+            ?? throw new CapabilityFailureException("找不到 HashAlgorithms");
+        var stringUtils = FindClientType(ClientSymbols.StringUtilsType)
+            ?? throw new CapabilityFailureException("找不到 StringUtils");
+        var digest = CapabilityMethod(hashType, "GetMd5Digest", typeof(Stream)).Invoke(null, new object[] { new MemoryStream(bytes, writable: false) })
+            ?? throw new CapabilityFailureException("MD5 计算返回 null");
+        return CapabilityMethod(stringUtils, "BytesToURLSafeBase64String", typeof(byte[]))
+            .Invoke(null, new[] { digest }) as string
+            ?? throw new CapabilityFailureException("MD5 编码返回 null");
+    }
+
+    private static void CapabilitySetMember(object target, string name, object? value)
+    {
+        var type = target.GetType();
+        var field = type.GetField(name, BindingFlags.Public | BindingFlags.Instance);
+        if (field is not null) { field.SetValue(target, value); return; }
+        var property = type.GetProperty(name, BindingFlags.Public | BindingFlags.Instance);
+        if (property is not null && property.CanWrite && property.GetIndexParameters().Length == 0)
+        {
+            property.SetValue(target, value);
+            return;
+        }
+        throw new CapabilityFailureException("客户端参数缺少可写成员 " + name);
     }
 
     public string ReadPathAcl(long sandboxId, long magic, string localRoot, string cloudPath)

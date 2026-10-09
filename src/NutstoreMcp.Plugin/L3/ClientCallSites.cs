@@ -60,6 +60,24 @@ internal static class ClientCallSites
 
         new(
             CloudOpsType,
+            ClientSymbols.UploadFullContent,
+            "全新文件的全量内容上传（CreateCloudFile 的第一阶段）",
+            Mutates: true,
+            Why: "上传请求没有目标路径，只把内容存进对象存储并返回内容对象标识 —— "
+               + "它本身不创建文件、不覆盖任何已有对象；只有随后成功发布元数据才会被引用。"
+               + "仅用于内容非空且不超过 256 KiB 的全量分支（客户端 393216 字节以下才走这条）。"),
+        new(
+            CloudOpsType,
+            ClientSymbols.CreateFileMetadata,
+            "把已上传内容发布成云端文件（CreateCloudFile 的第二阶段）",
+            Mutates: true,
+            Why: "**这是唯一真正落地文件的一步**：方法本体没有目标查重、没有 noReplace，"
+               + "所以只允许在本次调用新建、且建后确认为空的目录里发布，"
+               + "发布前后都按真实状态核对；目标存在或仅大小写冲突一律拒绝，"
+               + "失败或结果未知只做只读复查，不重试、不回滚、不删除。"),
+
+        new(
+            CloudOpsType,
             ClientSymbols.Search,
             "在云端按关键词搜索（SearchCloud）",
             Mutates: false,

@@ -71,6 +71,130 @@ public static class CloudWriteOperations
         return Serialize(state);
     }
 
+    /// <summary>
+    /// 首轮支持的内容上限（256 KiB）。
+    /// 客户端 393216 字节以下才走全量上传、4 MiB 才分块算云端 hash，所以这个范围内
+    /// 「全量上传 + 单块 hash」两条路径都已在真实对象上核对过。
+    /// </summary>
+    public const int MaxContentBytes = 262144;
+
+    /// <summary>
+    /// B2/C3 受限创建：在**本次调用新建、且建后确认为空**的目录里创建一个新文件。
+    ///
+    /// 安全性来自空的父目录，而不是名字长什么样：新目录里没有任何既有对象，所以
+    /// 随后创建的文件不可能与任何对象构成大小写别名（上一轮实测的别名冲突会被
+    /// 客户端改名，而改名的同内容/目录分支可能移动甚至删除既有对象）。
+    /// 客户端 <c>cf02</c> 本体没有查重也没有 noReplace，防覆写完全靠这里的检查。
+    /// </summary>
+    public static string CreateFile(
+        bool unlocked, bool confirm, bool dryRun, long id, long magic,
+        string directoryName, string fileName, int contentLength,
+        Func<string> bindings, Func<string, string> listDirectory, Func<string, string> readDetail,
+        Func<string> executeCreateDirectory, Func<string> executeCreateFile)
+    {
+        var directory = "/" + directoryName;
+        var target = directory + "/" + fileName;
+        var state = new State("create-file", unlocked, dryRun, id, magic, null, target);
+        state.Directory = directory;
+        state.ContentLength = contentLength;
+
+        BasicGuards(state, confirm);
+        Add(state.Refusals, ValidateSegment(directoryName, "目录名"));
+        Add(state.Refusals, ValidateSegment(fileName, "文件名"));
+        if (contentLength <= 0)
+            state.Refusals.Add("内容为空；空文件在客户端走另一条分支（跳过上传、块列表用 40 个零字节），首轮不支持。");
+        if (contentLength > MaxContentBytes)
+            state.Refusals.Add("首轮只支持不超过 " + MaxContentBytes + " 字节的内容。");
+
+        if (state.Refusals.Count == 0)
+        {
+            state.LocalRoot = ReadBinding(bindings, id, magic, state.Refusals);
+            if (state.Refusals.Count == 0)
+            {
+                // 沙箱根下不得有同名或大小写别名，否则会把新文件放进一个已有目录。
+                var rootEntries = ReadDirectory(listDirectory, "/", state.Refusals);
+                if (rootEntries is not null && ContainsTarget(rootEntries, directory))
+                    state.Refusals.Add("沙箱根下已有同名或大小写别名，拒绝创建：" + directory);
+                state.PreflightOk = state.Refusals.Count == 0;
+            }
+        }
+
+        if (state.PreflightOk && !dryRun)
+        {
+            Execute(state, executeCreateDirectory);
+            // 默认域必须确认新目录真实存在，否则连试都不试文件创建。
+            if (state.HookOk && state.HookVerified)
+            {
+                state.DirectoryCreated = true;
+                state.DirectoryVerification = state.HookVerification;
+
+                // 结构保证：新目录必须确认为空，否则绝不在里面创建文件。
+                var entries = ReadDirectory(listDirectory, directory, state.VerificationErrors);
+                if (entries is null)
+                    state.VerificationErrors.Add("无法确认新目录为空，拒绝在其中创建文件。");
+                else
+                {
+                    state.DirectoryEmpty = entries.Count == 0;
+                    state.RootEntryCount = entries.Count;
+                    if (state.DirectoryEmpty != true)
+                        state.VerificationErrors.Add("新目录不是空的（" + entries.Count + " 项），拒绝创建文件。");
+                }
+
+                if (state.DirectoryEmpty == true)
+                {
+                    Execute(state, executeCreateFile);
+                    state.HookCloudHash = state.Result is { } result && Text(result, "cloudHash") is { } hash ? hash : null;
+                    VerifyCreateFile(state, listDirectory, readDetail);
+                }
+            }
+        }
+
+        return Serialize(state);
+    }
+
+    /// <summary>单个路径段的命名规则；工具不接受调用方给出的多段路径。</summary>
+    private static string? ValidateSegment(string name, string label)
+    {
+        if (string.IsNullOrWhiteSpace(name)) return label + "不能为空。";
+        if (name.Length > 255) return label + "超过 255 字符。";
+        if (!string.Equals(name, name.Trim(), StringComparison.Ordinal)) return label + "首尾不能有空白。";
+        if (name.EndsWith(".", StringComparison.Ordinal)) return label + "不能以点结尾。";
+        if (name.IndexOfAny(new[] { '/', '\\' }) >= 0) return label + "不能包含路径分隔符。";
+        if (name.Any(c => char.IsControl(c) || "<>:\"|?*".IndexOf(c) >= 0)) return label + "包含非法字符。";
+        if (name is "." or "..") return label + "不能是 . 或 ..。";
+        var stem = name.Split('.')[0].TrimEnd().ToUpperInvariant();
+        if (stem is "CON" or "PRN" or "AUX" or "NUL" or "CONIN$" or "CONOUT$"
+            || (stem.Length == 4 && (stem.StartsWith("COM", StringComparison.Ordinal)
+                || stem.StartsWith("LPT", StringComparison.Ordinal))
+                && (stem[3] >= '1' && stem[3] <= '9')))
+            return label + "是 Windows 保留设备名。";
+        return null;
+    }
+
+    private static void Add(List<string> errors, string? error)
+    {
+        if (error is not null) errors.Add(error);
+    }
+
+    private static void VerifyCreateFile(State state, Func<string, string> list, Func<string, string> detail)
+    {
+        state.VerificationChecked = true;
+        var entries = ReadDirectory(list, state.Directory!, state.VerificationErrors);
+        if (entries is not null)
+            state.TargetPresent = entries.Count(path => string.Equals(path, state.Target, StringComparison.OrdinalIgnoreCase)) == 1;
+        if (state.TargetPresent != true) state.VerificationErrors.Add("写后新文件没有在目录里唯一出现或无法确认。");
+
+        state.TargetDetail = ReadDetail(detail, state.Target, state.VerificationErrors, "写后文件详情");
+        ValidateFile(state.TargetDetail, state.VerificationErrors, "写后文件");
+        if (state.TargetDetail?.Size is { } size) state.ContentMatches = size == state.ContentLength;
+        if (state.HookCloudHash is not null && state.TargetDetail?.Hash is not null)
+            state.ContentMatches = state.ContentMatches == true
+                && string.Equals(state.HookCloudHash, state.TargetDetail.Hash, StringComparison.Ordinal);
+        if (state.ContentMatches != true)
+            state.VerificationErrors.Add("写后文件的大小或云端 hash 与本次上传的内容不一致。");
+        FinishVerification(state);
+    }
+
     private static void BasicGuards(State state, bool confirm)
     {
         if (!state.Unlocked) state.Refusals.Add("L3 写入未解锁，需要内容为 yes 的 l3-write.enabled 令牌。");
@@ -256,6 +380,13 @@ public static class CloudWriteOperations
     private static void Execute(State state, Func<string> execute)
     {
         state.Attempted = true;
+        // 每次调用前先清空上一次的结果：受限创建会连着调两次（建目录、建文件），
+        // 不清空的话第二次失败会继承第一次的 ok / verified，直接误报成功。
+        state.Result = null;
+        state.HookOk = false;
+        state.HookVerified = false;
+        state.HookVerification = null;
+
         state.Result = ReadJson(execute, state.Refusals, "调用客户端写入实现");
         if (state.Result is null) return;
         state.HookOk = IsTrue(state.Result.Value, "ok");
@@ -372,6 +503,9 @@ public static class CloudWriteOperations
             srcCloudPath = state.Source, destCloudPath = state.Target, localRoot = state.LocalRoot,
             sourceParent = state.SourceParent, targetParent = state.TargetParent,
             preflightOk = state.PreflightOk, source = state.SourceDetail?.Summary,
+            directory = state.Directory, contentBytes = state.Operation == "create-file" ? state.ContentLength : (int?)null,
+            directoryCreated = state.Operation == "create-file" ? state.DirectoryCreated : (bool?)null,
+            directoryEmpty = state.Operation == "create-file" ? state.DirectoryEmpty : (bool?)null,
         },
         refusals = state.Refusals,
         result = state.Result,
@@ -381,6 +515,8 @@ public static class CloudWriteOperations
             ok = state.VerificationChecked ? (bool?)state.VerificationOk : null,
             sourcePresent = state.SourcePresent, targetPresent = state.TargetPresent,
             contentMatches = state.ContentMatches, target = state.TargetDetail?.Summary,
+            directory = state.DirectoryDetail?.Summary,
+            directoryVerification = state.DirectoryVerification,
             hook = state.HookVerification, errors = state.VerificationErrors,
         },
         notes = new[]
@@ -388,6 +524,9 @@ public static class CloudWriteOperations
             "只调用客户端自己的实现；目标存在或仅大小写冲突均拒绝覆盖。",
             "attempted 表示已尝试调用，executed 仅在默认域和插件复查都确认成功时为 true。",
             "失败后只读复查真实状态，不自动重试，也不自动回滚。",
+            state.Operation == "create-file"
+                ? "受限创建只用于本次调用新建、且建后确认为空的目录；父目录非空时不会创建文件。"
+                : "移动与建目录都在真实绑定、父目录和目标冲突核对之后才提交。",
         },
     }, JsonOptions);
 
@@ -423,6 +562,14 @@ public static class CloudWriteOperations
         public long Magic { get; }
         public string? Source { get; }
         public string Target { get; }
+        public string? Directory { get; set; }
+        public int ContentLength { get; set; }
+        public bool DirectoryCreated { get; set; }
+        public bool? DirectoryEmpty { get; set; }
+        public int? RootEntryCount { get; set; }
+        public string? HookCloudHash { get; set; }
+        public Detail? DirectoryDetail { get; set; }
+        public JsonElement? DirectoryVerification { get; set; }
         public string? SourceParent { get; set; }
         public string? TargetParent { get; set; }
         public string? LocalRoot { get; set; }

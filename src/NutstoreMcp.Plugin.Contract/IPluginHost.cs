@@ -217,6 +217,18 @@ public interface IUiHook
     /// <summary>在沙箱内创建一个新云端目录。</summary>
     string CreateCloudDirectory(long sandboxId, long magic, string localRoot, string cloudPath);
 
+    /// <summary>
+    /// 上传内容并把它发布成云端路径上的一个新文件。
+    /// </summary>
+    /// <remarks>
+    /// **会改云端**：先全量上传内容，再用 <c>CreateFileParam</c> 发布元数据；
+    /// 内容是调用方给的 base64（只支持全量上传的小文件，空内容与超限一律拒绝）。
+    /// <c>cf02</c> 本体没有查重与 noReplace，**防覆写完全依赖调用方**：
+    /// 只能用于已确认为空、且由本次调用新建的新目录里，本方法自身不做覆盖判断。
+    /// 返回里区分「内容已上传」和「元数据已提交」，两者之间失败时内容会留在云端。
+    /// </remarks>
+    string CreateCloudFile(long sandboxId, long magic, string localRoot, string cloudPath, string base64Content);
+
     /// <summary>读取云端路径的权限与继承状态。</summary>
     string ReadPathAcl(long sandboxId, long magic, string localRoot, string cloudPath);
 }

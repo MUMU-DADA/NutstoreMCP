@@ -60,6 +60,49 @@ public sealed partial class PluginTools
         catch (Exception ex) { return Error(ex); }
     }
 
+    [McpServerTool(Name = "nutstore_l3_create_file", ReadOnly = false, Destructive = false, Idempotent = false, OpenWorld = true)]
+    [Description("【默认只预演】上传内容并在云端创建一个新文件。需要写入解锁、confirm=true、dryRun=false。安全性来自结构：只允许在**本次调用新建、且建后确认为空**的目录里创建，所以新文件不可能与任何既有对象构成大小写别名（实测别名冲突会触发客户端改名，而改名的同内容/目录分支可能移动或删除既有对象）。目录名与文件名各为一个路径段，不接受多段路径；内容必须非空且不超过 256 KiB。提交后核对类型、大小、云端 hash、版本与目录成员；失败或未知只读复查，不重试、不回滚、不删除。")]
+    public static string L3CreateFile(
+        [Description("沙箱 ID")] long sandboxId,
+        [Description("沙箱的内部标识")] long magic,
+        [Description("新目录名，单个路径段，不能含路径分隔符")] string directoryName,
+        [Description("新文件名，单个路径段，不能含路径分隔符")] string fileName,
+        [Description("文件内容的 base64；非空且解码后不超过 256 KiB")] string contentBase64,
+        [Description("必须显式传 true 才可能执行")] bool confirm = false,
+        [Description("默认 true，只预演")] bool dryRun = true)
+    {
+        var ui = PluginEntry.Ui;
+        if (ui is null) return UiUnavailable;
+
+        var encoded = contentBase64 ?? string.Empty;
+        byte[] content;
+        try
+        {
+            content = Convert.FromBase64String(encoded);
+        }
+        catch (FormatException)
+        {
+            return JsonSerializer.Serialize(new { ok = false, reason = "内容不是有效的 base64。" }, Indented);
+        }
+
+        try
+        {
+            var bindings = ui.ReadClientSyncFolders();
+            var root = BoundRoot(bindings, sandboxId, magic);
+            var directory = "/" + directoryName;
+            var target = directory + "/" + fileName;
+            return CloudWriteOperations.CreateFile(
+                PluginEntry.IsWriteUnlocked(), confirm, dryRun, sandboxId, magic, directoryName, fileName,
+                content.Length,
+                () => bindings,
+                path => ui.ListCloudDirectory(sandboxId, magic, path),
+                path => ui.ReadObjectDetail(sandboxId, magic, root ?? string.Empty, LocalObjectPath(root, path)),
+                () => ui.CreateCloudDirectory(sandboxId, magic, root ?? string.Empty, directory),
+                () => ui.CreateCloudFile(sandboxId, magic, root ?? string.Empty, target, encoded));
+        }
+        catch (Exception ex) { return Error(ex); }
+    }
+
     [McpServerTool(Name = "nutstore_l3_path_acl", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = true)]
     [Description("查询已绑定同步文件夹内某路径的权限继承状态、用户权限和组权限。只读，支持根路径；不修改权限，不导出客户端会话数据。成员清单最多各 200 项，超出会明确标注截断。")]
     public static string L3PathAcl(
