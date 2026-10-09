@@ -223,7 +223,7 @@ internal static class ClientAssemblies
         }
 
         // 再逐个加载客户端目录里的托管程序集
-        foreach (var dll in Directory.GetFiles(ClientDirectory, "*.dll"))
+        foreach (var dll in ClientAssemblyFiles())
         {
             Assembly asm;
             try
@@ -464,7 +464,7 @@ internal static class ClientAssemblies
     {
         if (ClientAssemblyCache.Count == 0)
         {
-            foreach (var dll in Directory.GetFiles(ClientDirectory, "*.dll"))
+            foreach (var dll in ClientAssemblyFiles())
             {
                 var name = Path.GetFileNameWithoutExtension(dll);
                 try
@@ -483,6 +483,28 @@ internal static class ClientAssemblies
 
         failures.AddRange(ClientAssemblyFailures);
         return ClientAssemblyCache;
+    }
+
+    /// <summary>
+    /// 客户端目录下所有可能含类型的托管文件：全部 dll **加上主 exe**。
+    /// </summary>
+    /// <remarks>
+    /// 只扫 *.dll 是个真实的坑：Nutstore.Client.Wpf.Services.* 这些类型
+    /// （设置相关的服务）住在 NutstoreClient.exe 里，按名字搜会一直落空 ——
+    /// 落空的表现是「看起来没这个能力」，而不是报错。
+    /// </remarks>
+    private static IEnumerable<string> ClientAssemblyFiles()
+    {
+        foreach (var dll in Directory.GetFiles(ClientDirectory, "*.dll"))
+        {
+            yield return dll;
+        }
+
+        var exe = Path.Combine(ClientDirectory, "NutstoreClient.exe");
+        if (File.Exists(exe))
+        {
+            yield return exe;
+        }
     }
 
     private static string Json(object o) => System.Text.Json.JsonSerializer.Serialize(o, new JsonSerializerOptions
