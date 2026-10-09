@@ -149,10 +149,20 @@ public class McpEndToEndTests
         psi.Environment["NUTSTORE_ENV_FILE"] = Path.Combine(TestScratch.Root, "no-such.env");
 
         using var proc = System.Diagnostics.Process.Start(psi)!;
-        var stdout = await proc.StandardOutput.ReadToEndAsync(TestContext.Current.CancellationToken);
-        await proc.WaitForExitAsync(TestContext.Current.CancellationToken);
 
-        Assert.Equal(0, proc.ExitCode);
+        // 两个流必须**同时**读。只读 stdout、让 stderr 攒在管道里，子进程一旦把
+        // stderr 的缓冲区写满就会阻塞在写上，而父进程正等 stdout 关闭 —— 互相等成死锁。
+        // 实测：--doctor 崩溃时那段未处理异常的堆栈正好超过管道缓冲，测试会挂到超时，
+        // 而不是干脆地失败。所以先并发起两个读取任务，再等退出。
+        var stdoutTask = proc.StandardOutput.ReadToEndAsync(TestContext.Current.CancellationToken);
+        var stderrTask = proc.StandardError.ReadToEndAsync(TestContext.Current.CancellationToken);
+        await proc.WaitForExitAsync(TestContext.Current.CancellationToken);
+        var stdout = await stdoutTask;
+        var stderr = await stderrTask;
+
+        // 自检失败时细节在 stderr（未处理异常/崩溃），带进断言消息里，
+        // 出问题的人不必再手工复现一次才有堆栈。
+        Assert.True(proc.ExitCode == 0, $"自检退出码 {proc.ExitCode}\n--- stderr ---\n{stderr}");
         Assert.Contains("自检", stdout, StringComparison.Ordinal);
         Assert.Contains("云端白名单", stdout, StringComparison.Ordinal);
         Assert.Contains("someone@example.com", stdout, StringComparison.Ordinal);

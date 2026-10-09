@@ -91,6 +91,18 @@ public sealed class LocalDataException : NutstoreException
         : base(message, "LOCAL_DATA_UNAVAILABLE", hint, cause) { }
 }
 
+/// <summary>
+/// 根本连不上远端：DNS、TCP、TLS 握手或超时。
+///
+/// 和 <see cref="RemoteException"/> 的区别是**服务端根本没参与**：没有状态码可看，
+/// 重试或改路径都没用。单独给一个 code，调用方才知道该去查网络而不是查凭据。
+/// </summary>
+public sealed class NetworkException : NutstoreException
+{
+    public NetworkException(string message, string? hint = null, Exception? cause = null)
+        : base(message, "NETWORK_ERROR", hint, cause) { }
+}
+
 /// <summary>远端返回了非预期状态。</summary>
 public sealed class RemoteException : NutstoreException
 {

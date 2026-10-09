@@ -152,10 +152,7 @@ public sealed class WebDavClient : IDisposable
                 request.Content = contentFactory();
             }
 
-            var response = await _http.SendAsync(
-                request,
-                HttpCompletionOption.ResponseHeadersRead,
-                timeoutCts.Token);
+            var response = await SendOnceAsync(request, origin, timeoutCts, timeoutMs, ct);
 
             if (!RedirectStatuses.Contains((int)response.StatusCode))
             {
@@ -186,6 +183,47 @@ public sealed class WebDavClient : IDisposable
             }
 
             current = next.ToString();
+        }
+    }
+
+    /// <summary>
+    /// 真正把请求发出去，并把**传输层**失败翻译成结构化错误。
+    ///
+    /// 为什么不靠调用方 catch：HttpClient 在 DNS/TCP/TLS/超时时抛的是
+    /// <see cref="HttpRequestException"/> 或 <see cref="TaskCanceledException"/>，
+    /// 而调用方只 catch <see cref="NutstoreException"/>。这类异常以前会一路穿到
+    /// <c>--doctor</c> 顶层变成未处理崩溃（实测：TLS 失败整段自检直接退出），
+    /// 在 MCP 工具层则退化成一句通用错误。网络问题和「服务端拒绝」必须分得开。
+    /// </summary>
+    private async Task<HttpResponseMessage> SendOnceAsync(
+        HttpRequestMessage request,
+        string origin,
+        CancellationTokenSource timeoutCts,
+        int? timeoutMs,
+        CancellationToken ct)
+    {
+        try
+        {
+            return await _http.SendAsync(
+                request,
+                HttpCompletionOption.ResponseHeadersRead,
+                timeoutCts.Token);
+        }
+        catch (HttpRequestException ex)
+        {
+            throw new NetworkException(
+                $"连不上 {origin}：{ex.Message}",
+                hint: "DNS/连接/TLS 握手失败。受限沙箱或受限令牌下 Schannel 可能拿不到凭据"
+                    + "（0x8009030E「安全包中没有可用的凭证」），这种环境要在沙箱外才能连通。",
+                cause: ex);
+        }
+        catch (OperationCanceledException ex) when (!ct.IsCancellationRequested)
+        {
+            // 调用方没取消 → 只能是上面那个 CancelAfter 到点了
+            throw new NetworkException(
+                $"请求超时：{origin}（{timeoutMs ?? _config.TimeoutMs} ms）",
+                hint: "调大 NUTSTORE_TIMEOUT_MS，或先确认到该主机的连通性。",
+                cause: ex);
         }
     }
 
