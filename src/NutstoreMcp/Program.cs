@@ -17,6 +17,42 @@ if (args.Contains("--doctor"))
     return await Doctor.RunAsync();
 }
 
+// 诊断：云端沙箱列表里有哪些字段。只报字段名不报值。
+if (args.Contains("--dump-sandbox-fields"))
+{
+    // 数据库位置由 AppConfig 决定（见 Doctor 的用法），不能传 null
+    var cfg = AppConfig.Load();
+    using var data = new LocalNutstoreData(cfg.DataDir);
+
+    if (!data.Available)
+    {
+        Console.Error.WriteLine($"本地数据库不可用: {data.DbPath ?? "(未找到)"}");
+        return 1;
+    }
+
+    var entries = data.SandboxListFieldNames();
+    Console.WriteLine($"all_sandbox_list: {entries.Count} 条");
+
+    if (entries.Count > 0)
+    {
+        Console.WriteLine();
+        foreach (var (names, i) in entries.Select((n, i) => (n, i)))
+        {
+            Console.WriteLine($"  [{i}] {string.Join(", ", names)}");
+        }
+
+        Console.WriteLine();
+        Console.WriteLine("出现过的字段（去重）:");
+        foreach (var name in entries.SelectMany(e => e).Distinct().OrderBy(n => n, StringComparer.Ordinal))
+        {
+            var count = entries.Count(e => e.Contains(name));
+            Console.WriteLine($"  {name,-24} 出现在 {count}/{entries.Count} 条");
+        }
+    }
+
+    return 0;
+}
+
 AppConfig config;
 try
 {

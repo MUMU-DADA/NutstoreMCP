@@ -281,6 +281,70 @@ public sealed class LocalNutstoreData : IDisposable
         return result;
     }
 
+    /// <summary>
+    /// <c>all_sandbox_list</c> 里每条记录出现了哪些字段名。
+    ///
+    /// <para>
+    /// 只报**字段名**不报值：用来判断云端沙箱列表里有没有绑定所需的
+    /// <c>sandboxId</c> / <c>magic</c> / <c>caps</c>，而不必把密钥类内容打出来。
+    /// </para>
+    /// </summary>
+    public IReadOnlyList<IReadOnlyList<string>> SandboxListFieldNames()
+    {
+        var result = new List<IReadOnlyList<string>>();
+
+        if (!Available)
+        {
+            return result;
+        }
+
+        string? raw;
+        try
+        {
+            var conn = Open();
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = "SELECT value FROM config WHERE key = 'all_sandbox_list'";
+            raw = cmd.ExecuteScalar() as string;
+        }
+        catch (SqliteException)
+        {
+            return result;
+        }
+
+        if (string.IsNullOrEmpty(raw))
+        {
+            return result;
+        }
+
+        try
+        {
+            using var doc = JsonDocument.Parse(raw);
+            if (doc.RootElement.ValueKind != JsonValueKind.Array)
+            {
+                return result;
+            }
+
+            foreach (var item in doc.RootElement.EnumerateArray())
+            {
+                if (item.ValueKind != JsonValueKind.Object)
+                {
+                    continue;
+                }
+
+                result.Add(item.EnumerateObject()
+                    .Select(p => p.Name)
+                    .OrderBy(n => n, StringComparer.Ordinal)
+                    .ToList());
+            }
+        }
+        catch (JsonException)
+        {
+            // 结构异常就当没有
+        }
+
+        return result;
+    }
+
     /// <summary>云端 sandbox 列表（已剔除密钥字段）。</summary>
     private List<JsonElement> SandboxList()
     {
