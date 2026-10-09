@@ -397,6 +397,118 @@ public sealed class PluginTools
         }
     }
 
+    [McpServerTool(Name = "nutstore_l3_write_setting", ReadOnly = false, Destructive = false, Idempotent = true, OpenWorld = false)]
+    [Description("【默认只预演】修改一个客户端设置项，走客户端自己的 IConfigureService。只允许改白名单里的设置：普通开关（开机自启/同步完关机/气泡提醒/直接打开/体验版）需要 l3-write.enabled；系统级（文件保护锁/高级安全验证/暂停同步）额外需要 l3-write-system.enabled。")]
+    public static string L3WriteSetting(
+        [Description("设置项名，例如 AutoStart / IsShutdownOnIdle / EnableSafeGuard")] string name,
+        [Description("目标值。布尔设置只接受 true / false")] string value,
+        [Description("必须显式传 true 才可能执行")] bool confirm = false,
+        [Description("默认 true（只预演不执行）")] bool dryRun = true)
+    {
+        try
+        {
+            var refusals = new List<string>();
+            var tier = L3.SettableSettings.TierOf(name);
+
+            if (tier is null)
+            {
+                refusals.Add(
+                    $"不允许修改 {name}。可改的设置有: "
+                    + string.Join(", ", L3.SettableSettings.AllNames)
+                    + "。其余设置项不在白名单里 —— 不接受任意属性名。");
+            }
+
+            var normalUnlocked = PluginEntry.IsWriteUnlocked();
+            var systemUnlocked = PluginEntry.IsSystemWriteUnlocked();
+
+            if (!normalUnlocked)
+            {
+                refusals.Add(
+                    "L3 写入未解锁。把内容为 yes 的令牌文件放到 "
+                    + "%LOCALAPPDATA%\\NutstoreMcp\\l3-write.enabled 即可。撤销只需删掉它。");
+            }
+
+            if (tier == "system" && !systemUnlocked)
+            {
+                refusals.Add(
+                    $"{name} 是**系统级**设置，需要第二把锁："
+                    + "把内容为 yes 的令牌文件放到 "
+                    + "%LOCALAPPDATA%\\NutstoreMcp\\l3-write-system.enabled。"
+                    + "与普通写入分开是有意的 —— 共用一把锁的话，"
+                    + "「为了改开机自启而解锁」就等于同时允许装驱动。"
+                    + (L3.SettableSettings.SystemLevel.TryGetValue(name, out var why) ? " 影响: " + why : string.Empty));
+            }
+
+            if (!confirm)
+            {
+                refusals.Add("调用方没有传 confirm=true。");
+            }
+
+            // 值的形状先挡一道，免得把明显不对的东西交给客户端
+            if (tier == "normal" || tier == "system")
+            {
+                var looksBoolean = value is "true" or "false" or "True" or "False" or "TRUE" or "FALSE";
+                if (!looksBoolean)
+                {
+                    // 白名单里的都是布尔开关；非布尔值先拒绝并说明
+                    refusals.Add(
+                        $"白名单里的设置项都是布尔开关，但收到的是 \"{value}\"。"
+                        + "只接受 true / false。");
+                }
+            }
+
+            string? result = null;
+            var executed = false;
+
+            if (refusals.Count == 0 && !dryRun)
+            {
+                var ui = PluginEntry.Ui;
+                if (ui is null)
+                {
+                    refusals.Add("UI 钩子不可用 —— 无法调用客户端实现。");
+                }
+                else
+                {
+                    try
+                    {
+                        result = ui.WriteClientSetting(name, value);
+                        executed = true;
+                    }
+                    catch (Exception ex)
+                    {
+                        refusals.Add(
+                            $"调用客户端实现失败（钩子可能是旧版本，需要重启客户端）: "
+                            + $"{ex.GetType().Name}: {ex.Message}");
+                    }
+                }
+            }
+
+            return JsonSerializer.Serialize(new
+            {
+                allowed = refusals.Count == 0,
+                wouldWrite = refusals.Count == 0 && !dryRun && executed,
+                dryRun,
+                tier,
+                unlocked = new { normal = normalUnlocked, system = systemUnlocked },
+                probe = new { name, value },
+                refusals,
+                notes = new[]
+                {
+                    "改动会写入客户端的设置存储，与在设置界面里点一下等价。",
+                    tier == "system"
+                        ? "这是系统级设置：客户端会自己决定是否需要重启或安装驱动。"
+                        : "普通开关，改错了再改回来即可。",
+                },
+                executed,
+                result,
+            }, Indented);
+        }
+        catch (Exception ex)
+        {
+            return Error(ex);
+        }
+    }
+
     [McpServerTool(Name = "nutstore_client_search_types", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
     [Description("按名字子串搜索坚果云客户端的所有类型（跨全部程序集）。用于在不知道类型全名时定位 API。只读，不执行任何客户端代码。")]
     public static string ClientSearchTypes(

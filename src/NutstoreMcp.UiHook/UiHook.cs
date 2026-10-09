@@ -1108,6 +1108,175 @@ public sealed class UiHook : MarshalByRefObject, IUiHook
         }
     }
 
+    /// <summary>
+    /// 修改一个客户端设置项。
+    /// </summary>
+    /// <remarks>
+    /// 策略判断在插件侧的 WriteGuards 里（那边可测），这里只负责执行 ——
+    /// 但仍会核对改完之后的值确实变成了目标值，因为「调了没生效」和
+    /// 「调了生效了」对调用方是两件完全不同的事。
+    ///
+    /// 目标设置的属性名必须**已经存在于** IConfigureService 上；
+    /// 不接受任意字符串，避免变成通用的属性写入器。
+    /// </remarks>
+    public string WriteClientSetting(string name, string value)
+    {
+        try
+        {
+            if (string.IsNullOrWhiteSpace(name))
+            {
+                return Json.Obj(("ok", false), ("reason", "设置项名为空"));
+            }
+
+            var locatorType = FindClientType("CommonServiceLocator.ServiceLocator");
+            var serviceType = FindClientType("Nutstore.Client.Wpf.Services.IConfigureService");
+
+            if (locatorType is null || serviceType is null)
+            {
+                return Json.Obj(("ok", false), ("reason", "找不到 ServiceLocator 或 IConfigureService"));
+            }
+
+            // 属性名必须真的存在于接口上
+            var prop = serviceType.GetProperty(name, BindingFlags.Public | BindingFlags.Instance);
+            if (prop is null)
+            {
+                return Json.Obj(
+                    ("ok", false),
+                    ("reason", $"IConfigureService 上没有名为 {name} 的设置项"));
+            }
+
+            var current = locatorType.GetProperty("Current", BindingFlags.Public | BindingFlags.Static)
+                ?.GetValue(null);
+            if (current is null)
+            {
+                return Json.Obj(("ok", false), ("reason", "ServiceLocator.Current 为空"));
+            }
+
+            var getInstance = current.GetType().GetMethod(
+                "GetInstance", BindingFlags.Public | BindingFlags.Instance,
+                binder: null, types: new[] { typeof(Type) }, modifiers: null);
+            if (getInstance is null)
+            {
+                return Json.Obj(("ok", false), ("reason", "ServiceLocator 上没有 GetInstance(Type)"));
+            }
+
+            var service = getInstance.Invoke(current, new object[] { serviceType });
+            var item = service is null ? null : prop.GetValue(service);
+            if (item is null)
+            {
+                return Json.Obj(("ok", false), ("reason", $"{name} 的当前值为 null"));
+            }
+
+            var itemType = item.GetType();
+            var valueProp = itemType.GetProperty("Value", BindingFlags.Public | BindingFlags.Instance);
+
+            if (valueProp is null)
+            {
+                return Json.Obj(
+                    ("ok", false),
+                    ("reason", $"{name} 不是可写的 ConfigureItem（类型 {itemType.Name}）"));
+            }
+
+            // ── 解析目标值 ──
+            object? target;
+            try
+            {
+                target = ConvertToTarget(value, valueProp.PropertyType);
+            }
+            catch (Exception ex)
+            {
+                return Json.Obj(
+                    ("ok", false),
+                    ("reason", $"值 {value} 无法转成 {valueProp.PropertyType.Name}: {ex.Message}"));
+            }
+
+            var before = valueProp.GetValue(item)?.ToString();
+
+            // ── 写入 ──
+            // 优先用 SetValue(T)：它可能带额外的变更通知逻辑，
+            // 直接写 Value 属性可能绕过那些。取不到才退回属性写入。
+            var setValue = itemType.GetMethods(BindingFlags.Public | BindingFlags.Instance)
+                .FirstOrDefault(m => m.Name == "SetValue" && m.GetParameters().Length == 1);
+
+            if (setValue is not null)
+            {
+                setValue.Invoke(item, new[] { target });
+            }
+            else
+            {
+                valueProp.SetValue(item, target);
+            }
+
+            // ── 持久化 ──
+            // IsAutoSave 为真时客户端自己会存；否则要显式 Save。
+            var isAutoSave = itemType.GetProperty("IsAutoSave")?.GetValue(item) as bool? ?? false;
+            var saved = false;
+
+            if (!isAutoSave)
+            {
+                var save = itemType.GetMethod("Save", BindingFlags.Public | BindingFlags.Instance,
+                    binder: null, types: new[] { typeof(bool) }, modifiers: null);
+
+                if (save is not null)
+                {
+                    save.Invoke(item, new object[] { true });
+                    saved = true;
+                }
+            }
+
+            var after = valueProp.GetValue(item)?.ToString();
+
+            return Json.Obj(
+                ("ok", true),
+                ("domain", AppDomain.CurrentDomain.FriendlyName),
+                ("name", name),
+                ("before", before),
+                ("after", after),
+                ("target", value),
+                ("autoSave", isAutoSave),
+                ("explicitSaveCalled", saved),
+                ("isChanged", (itemType.GetProperty("IsChanged")?.GetValue(item) as bool? ?? false).ToString()),
+                ("effective", string.Equals(after, target?.ToString(), StringComparison.Ordinal)
+                    ? "值是目标值"
+                    : "⚠️ 写完之后的值与目标不一致 —— 客户端可能拒绝了这次改动"));
+        }
+        catch (Exception ex)
+        {
+            return Json.Obj(
+                ("ok", false),
+                ("reason", ex.GetType().Name + ": " + ex.Message),
+                ("chain", Json.StringArray(Chain(ex))));
+        }
+    }
+
+    /// <summary>把字符串值转成目标属性类型。只支持设置项用到的几种。</summary>
+    private static object? ConvertToTarget(string value, Type targetType)
+    {
+        if (targetType == typeof(bool))
+        {
+            // 只接受明确的真假写法，不做「非 0 即真」这种模糊判断
+            if (value.Equals("true", StringComparison.OrdinalIgnoreCase)) return true;
+            if (value.Equals("false", StringComparison.OrdinalIgnoreCase)) return false;
+            throw new ArgumentException("布尔设置只接受 true / false");
+        }
+
+        if (targetType == typeof(string)) return value;
+
+        if (targetType.IsEnum) return Enum.Parse(targetType, value, ignoreCase: true);
+
+        if (targetType == typeof(int)) return int.Parse(value, CultureInfo.InvariantCulture);
+        if (targetType == typeof(long)) return long.Parse(value, CultureInfo.InvariantCulture);
+
+        // 其余类型（如 GlobalHotKey 这类结构）交给它自己的转换器
+        var converter = System.ComponentModel.TypeDescriptor.GetConverter(targetType);
+        if (converter is not null && converter.CanConvertFrom(typeof(string)))
+        {
+            return converter.ConvertFromInvariantString(value);
+        }
+
+        throw new ArgumentException($"不支持的设置项类型 {targetType.Name}");
+    }
+
     private static List<string> Chain(Exception ex)
     {
         var result = new List<string>();

@@ -163,12 +163,30 @@ public static class PluginEntry
         "l3-write.enabled");
 
     /// <summary>L3 写入是否已解锁。环境变量或令牌文件任一满足即可。</summary>
-    public static bool IsWriteUnlocked()
+    public static bool IsWriteUnlocked() => IsUnlocked(UnlockFilePath, "NUTSTORE_L3_WRITE");
+
+    /// <summary>
+    /// 系统级设置改动是否已解锁（第二把锁）。
+    /// </summary>
+    /// <remarks>
+    /// 与普通写入分开：`EnableFileProtectionLock` 会安装文件系统驱动，
+    /// `EnableSafeGuard` 影响权限验证 —— 它们做完不好撤。
+    /// 共用一把锁的话，「为了改开机自启而解锁」就等于同时允许装驱动。
+    /// </remarks>
+    public static bool IsSystemWriteUnlocked() => IsUnlocked(SystemUnlockFilePath, "NUTSTORE_L3_WRITE_SYSTEM");
+
+    /// <summary>系统级改动的令牌文件。默认不存在。</summary>
+    public static string SystemUnlockFilePath => Path.Combine(
+        Path.GetDirectoryName(StateFilePath) ?? ".",
+        "l3-write-system.enabled");
+
+    private static bool IsUnlocked(string tokenPath, string envName)
     {
         try
         {
-            var env = Environment.GetEnvironmentVariable("NUTSTORE_L3_WRITE");
-            if (env is not null && (env.Trim() == "1" || env.Trim().Equals("true", StringComparison.OrdinalIgnoreCase)))
+            var env = Environment.GetEnvironmentVariable(envName);
+            if (env is not null
+                && (env.Trim() == "1" || env.Trim().Equals("true", StringComparison.OrdinalIgnoreCase)))
             {
                 return true;
             }
@@ -180,9 +198,8 @@ public static class PluginEntry
 
         try
         {
-            var path = UnlockFilePath;
-            return File.Exists(path)
-                && File.ReadAllText(path).Trim().Equals("yes", StringComparison.OrdinalIgnoreCase);
+            return File.Exists(tokenPath)
+                && File.ReadAllText(tokenPath).Trim().Equals("yes", StringComparison.OrdinalIgnoreCase);
         }
         catch (Exception)
         {

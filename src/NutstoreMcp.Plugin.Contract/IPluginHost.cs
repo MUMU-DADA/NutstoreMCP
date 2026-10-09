@@ -152,4 +152,12 @@ public interface IUiHook
     /// </summary>
     /// <remarks>只读，不修改任何设置。</remarks>
     string ReadClientSettings();
+
+    /// <summary>
+    /// 修改一个客户端设置项（走它自己的 IConfigureService）。
+    /// </summary>
+    /// <remarks>
+    /// 调用方必须已完成放行判断并选定风险层级；本方法只负责执行。
+    /// </remarks>
+    string WriteClientSetting(string name, string value);
 }
