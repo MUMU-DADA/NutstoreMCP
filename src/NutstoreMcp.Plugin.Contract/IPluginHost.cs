@@ -119,4 +119,15 @@ public interface IUiHook
     /// <para>只读，不修改任何客户端状态。</para>
     /// </summary>
     string ReadClientSyncFolders();
+
+    /// <summary>
+    /// 把一个已存在于云端的沙箱绑定到本地目录（在默认域里执行）。
+    /// </summary>
+    /// <remarks>
+    /// 参数刻意用平行数组而不是 JSON：钩子住客户端默认域，必须零依赖，
+    /// 所以不在这里解析任何东西。跨域传 string[] / long[] 是原生支持的。
+    /// 调用方（插件侧，有 System.Text.Json）负责把 all_sandbox_list 里那条记录
+    /// 拆成这两个数组。
+    /// </remarks>
+    string BindSandbox(long sandboxId, long magic, string localPath, string[] permPaths, long[] permCaps);
 }

@@ -50,6 +50,27 @@ if (args.Contains("--dump-sandbox-fields"))
         }
     }
 
+    Console.WriteLine();
+    Console.WriteLine("嵌套字段结构（只报形状，不报值）:");
+    foreach (var line in data.SandboxListFieldShapes("pathPerms", "sandbox", "caps"))
+    {
+        Console.WriteLine($"  {line}");
+    }
+
+    Console.WriteLine();
+    var candidates = data.BindCandidates();
+    Console.WriteLine($"可绑定候选（云端有、本地未绑定）: {candidates.Count} 个");
+    foreach (var c in candidates)
+    {
+        var perms = string.Join(", ", c.PathPerms.Select(p => $"{p.Path}={p.Caps}"));
+        Console.WriteLine($"  id={c.SandboxId} magic={(c.Magic?.ToString() ?? "(无)")} name={c.Name} perms=[{perms}]");
+    }
+
+    if (candidates.Count == 0)
+    {
+        Console.WriteLine("  （没有可绑定的目标 —— 需要先在云端建一个文件夹，客户端刷新列表后才会出现）");
+    }
+
     return 0;
 }
 

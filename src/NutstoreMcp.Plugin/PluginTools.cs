@@ -37,7 +37,10 @@ public sealed class PluginTools
         [Description("必须显式传 true 才可能执行")] bool confirm = false,
         [Description("默认 true（只预演不执行）")] bool dryRun = true,
         [Description("沙箱的同步状态；必须是 NotSynced 才放行")] string? sandboxSyncState = null,
-        [Description("现有同步根路径列表，分号分隔。不传则因无法确认重叠而拒绝")] string? existingBindings = null)
+        [Description("现有同步根路径列表，分号分隔。不传则因无法确认重叠而拒绝")] string? existingBindings = null,
+        [Description("沙箱的内部标识（来自 nutstore_l3_bind_candidates 的 magic）。绑定必须原样带上")] long magic = 0,
+        [Description("路径权限的 path 列表（来自 bind_candidates 的 pathPerms[].path），与 permCaps 一一对应")] string[]? permPaths = null,
+        [Description("路径权限的 caps 列表（来自 bind_candidates 的 pathPerms[].caps），与 permPaths 一一对应")] long[]? permCaps = null)
     {
         try
         {
@@ -104,9 +107,43 @@ public sealed class PluginTools
                 refusals.Add($"无法检查目录内容: {probeError}");
             }
 
-            // 执行通道：需要默认域的客户端 DAO，当前不可用。
-            // 即使全部放行也不写 —— 明确说清楚，不假装成功。
-            const bool executionAvailable = false;
+            // ── 执行通道 ──
+            //
+            // 只有全部放行、且不是预演时才真的调客户端。
+            // 钩子没有 BindSandbox（旧版本）时会抛 RemotingException —— 捕获后如实报告，
+            // 不假装成功。
+            string? executionResult = null;
+            var executionAvailable = false;
+
+            if (refusals.Count == 0 && !dryRun)
+            {
+                var ui = PluginEntry.Ui;
+                if (ui is null)
+                {
+                    refusals.Add("UI 钩子不可用 —— 无法在默认域里执行绑定。");
+                }
+                else if (permPaths is null || permCaps is null || permPaths.Length == 0)
+                {
+                    // fail-closed：没有权限信息就不绑定
+                    refusals.Add(
+                        "缺少 pathPerms（permPaths / permCaps）—— 绑定一个权限不明的沙箱"
+                        + "比不绑定危险得多。请从 nutstore_l3_bind_candidates 取。");
+                }
+                else
+                {
+                    try
+                    {
+                        executionResult = ui.BindSandbox(sandboxId, magic, localPath, permPaths, permCaps);
+                        executionAvailable = true;
+                    }
+                    catch (Exception ex)
+                    {
+                        refusals.Add(
+                            $"调用默认域失败（钩子可能是旧版本，需要重启客户端）: "
+                            + $"{ex.GetType().Name}: {ex.Message}");
+                    }
+                }
+            }
 
             return JsonSerializer.Serialize(new
             {
@@ -122,16 +159,19 @@ public sealed class PluginTools
                     isEmpty,
                     entryCount,
                     sandboxId,
+                    magic,
+                    permCount = permPaths?.Length ?? 0,
                     sandboxSyncState = sandboxSyncState ?? "(未提供 —— 将因无法确认状态而被拒)",
                     existingBindingCount = bindings.Count,
                 },
                 refusals,
                 notes = verdict.Notes,
                 executionAvailable,
+                executionResult,
                 executionUnavailableReason = executionAvailable
                     ? null
-                    : "调用客户端 NSSandboxDAO.InitSandbox 需要默认域（客户端运行时环境），"
-                      + "而插件的子域里客户端的静态初始化会失败。需要重启客户端后经 UI 钩子接通。",
+                    : "尚未执行。需要：环境变量 NUTSTORE_L3_WRITE=1 + confirm=true + dryRun=false，"
+                      + "且默认域钩子已更新（需重启客户端一次）。",
             }, Indented);
         }
         catch (Exception ex)

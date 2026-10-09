@@ -324,6 +324,21 @@ public sealed class NutstoreTools
     [Description("列出本机已挂载的同步文件夹：云端路径、本地镜像路径、对象数、云端独有对象数。同时列出「云端存在但本地未挂载」的目录（unmountedSandboxes）。")]
     public string SyncFolders() => Json(_local.ListSyncFolders());
 
+    [McpServerTool(Name = "nutstore_l3_bind_candidates", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
+    [Description("列出「云端存在但本地未绑定」的沙箱，带上绑定所需的字段（sandboxId、magic、pathPerms）。这些值原样喂给插件侧的 nutstore_l3_bind 即可完成绑定。")]
+    public string L3BindCandidates()
+    {
+        var candidates = _local.BindCandidates();
+
+        return Json(new
+        {
+            count = candidates.Count,
+            candidates,
+            note = "magic 是客户端内部标识（类似 inode），绑定时必须原样带上；它不是凭据。"
+                 + "真正的密钥 lanSyncCipher / channelId 永不导出。",
+        });
+    }
+
     [McpServerTool(Name = "nutstore_sync_status", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
     [Description("本地同步总览：同步文件夹数、受管对象数、云端独有对象数、同步错误数、客户端设置快照。")]
     public string SyncStatus() => Json(_local.Summary());

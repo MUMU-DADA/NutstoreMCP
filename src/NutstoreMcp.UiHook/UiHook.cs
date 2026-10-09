@@ -618,6 +618,120 @@ public sealed class UiHook : MarshalByRefObject, IUiHook
         }
     }
 
+    /// <summary>
+    /// 把已存在于云端的沙箱绑定到本地目录。
+    /// </summary>
+    /// <remarks>
+    /// 本方法不做策略判断（那些在插件侧的 WriteGuards 里，已离线验证），
+    /// 只负责执行。但输入的基本合法性仍在这里兜一道 —— 钩子跑在客户端进程内，
+    /// 拿到明显不对的参数应该直接拒绝而不是交给客户端代码去炸。
+    /// </remarks>
+    public string BindSandbox(long sandboxId, long magic, string localPath, string[] permPaths, long[] permCaps)
+    {
+        try
+        {
+            // ── 输入兜底 ──
+            if (sandboxId <= 0)
+            {
+                return Json.Obj(("ok", false), ("reason", "sandboxId 必须为正数"));
+            }
+
+            if (string.IsNullOrWhiteSpace(localPath))
+            {
+                return Json.Obj(("ok", false), ("reason", "localPath 为空"));
+            }
+
+            // fail-closed：没有权限信息就不绑定。
+            // 绑定一个权限不明的沙箱比不绑定危险得多。
+            if (permPaths is null || permCaps is null || permPaths.Length == 0
+                || permPaths.Length != permCaps.Length)
+            {
+                return Json.Obj(("ok", false), ("reason", "pathPerms 缺失或长度不匹配 —— 权限不明，拒绝绑定"));
+            }
+
+            var dao = FindClientType("NutstoreClient.DAO.NSSandboxDAO");
+            var sandboxType = FindClientType("NutstoreClient.Common.NSSandbox");
+            var beanType = FindClientType("NutstoreClient.Common.CapsOnPathBean");
+
+            if (dao is null || sandboxType is null || beanType is null)
+            {
+                return Json.Obj(
+                    ("ok", false),
+                    ("reason", $"默认域里缺少类型 (dao={dao is not null}, sandbox={sandboxType is not null}, bean={beanType is not null})"));
+            }
+
+            // ── 构造 NSSandbox(long id, long magic, string localAbsPath, bool allowUncPath) ──
+            var sandbox = Activator.CreateInstance(
+                sandboxType,
+                BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+                binder: null,
+                args: new object[] { sandboxId, magic, localPath, false },
+                culture: null);
+
+            if (sandbox is null)
+            {
+                return Json.Obj(("ok", false), ("reason", "NSSandbox 构造失败"));
+            }
+
+            // ── 构造 List<CapsOnPathBean> ──
+            // CapsOnPathBean 的构造函数是非公开的，所以用非公开 ctor + 显式设属性，
+            // 而不是赌某个 JSON 库的反序列化行为。
+            var beanCtor = beanType.GetConstructor(
+                BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+                binder: null,
+                types: Type.EmptyTypes,
+                modifiers: null);
+
+            var pathProp = beanType.GetProperty("Path");
+            var capsProp = beanType.GetProperty("Caps");
+
+            if (beanCtor is null || pathProp is null || capsProp is null)
+            {
+                return Json.Obj(("ok", false), ("reason", "CapsOnPathBean 无法构造（ctor/Path/Caps 缺失）"));
+            }
+
+            var permsListType = typeof(List<>).MakeGenericType(beanType);
+            var perms = (System.Collections.IList)Activator.CreateInstance(permsListType)!;
+
+            for (var i = 0; i < permPaths.Length; i++)
+            {
+                var bean = beanCtor.Invoke(null);
+                pathProp.SetValue(bean, permPaths[i]);
+
+                // Caps 是枚举：从数字还原，而不是硬编码某个常量名
+                capsProp.SetValue(bean, Enum.ToObject(capsProp.PropertyType, permCaps[i]));
+                perms.Add(bean);
+            }
+
+            // ── 执行 ──
+            var init = dao.GetMethod("InitSandbox", BindingFlags.Public | BindingFlags.Static)
+                       ?? dao.GetMethod("InitSandbox");
+
+            if (init is null)
+            {
+                return Json.Obj(("ok", false), ("reason", "NSSandboxDAO.InitSandbox 不存在"));
+            }
+
+            init.Invoke(null, new object[] { sandbox, perms });
+
+            return Json.Obj(
+                ("ok", true),
+                ("domain", AppDomain.CurrentDomain.FriendlyName),
+                ("sandboxId", sandboxId),
+                ("localPath", localPath),
+                ("permCount", perms.Count),
+                ("note", "InitSandbox 已返回。客户端是否真正接管该目录由它自己决定 —— "
+                       + "本方法不做「成功」的断言，实际生效情况请看客户端的同步文件夹列表。"));
+        }
+        catch (Exception ex)
+        {
+            return Json.Obj(
+                ("ok", false),
+                ("reason", ex.GetType().Name + ": " + ex.Message),
+                ("chain", Json.StringArray(Chain(ex))));
+        }
+    }
+
     private static List<string> Chain(Exception ex)
     {
         var result = new List<string>();

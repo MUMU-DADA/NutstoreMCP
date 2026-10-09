@@ -345,6 +345,115 @@ public sealed class LocalNutstoreData : IDisposable
         return result;
     }
 
+    /// <summary>
+    /// <c>all_sandbox_list</c> 里指定字段的**结构**（类型/子字段名），不含任何值。
+    ///
+    /// <para>
+    /// 用来判断 <c>pathPerms</c> / <c>sandbox</c> 这些嵌套字段长什么样，
+    /// 而不必把密钥类内容打出来。
+    /// </para>
+    /// </summary>
+    public IReadOnlyList<string> SandboxListFieldShapes(params string[] fields)
+    {
+        var result = new List<string>();
+
+        if (!Available)
+        {
+            return result;
+        }
+
+        string? raw;
+        try
+        {
+            var conn = Open();
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = "SELECT value FROM config WHERE key = 'all_sandbox_list'";
+            raw = cmd.ExecuteScalar() as string;
+        }
+        catch (SqliteException)
+        {
+            return result;
+        }
+
+        if (string.IsNullOrEmpty(raw))
+        {
+            return result;
+        }
+
+        try
+        {
+            using var doc = JsonDocument.Parse(raw);
+            if (doc.RootElement.ValueKind != JsonValueKind.Array)
+            {
+                return result;
+            }
+
+            var first = doc.RootElement.EnumerateArray().FirstOrDefault();
+            if (first.ValueKind != JsonValueKind.Object)
+            {
+                return result;
+            }
+
+            foreach (var field in fields)
+            {
+                if (!first.TryGetProperty(field, out var value))
+                {
+                    result.Add($"{field}: (不存在)");
+                    continue;
+                }
+
+                result.Add($"{field}: {Describe(value, 0)}");
+            }
+        }
+        catch (JsonException)
+        {
+            // 结构异常就当没有
+        }
+
+        return result;
+    }
+
+    /// <summary>描述 JSON 结构：只报类型与字段名，不报值。</summary>
+    private static string Describe(JsonElement element, int depth)
+    {
+        if (depth > 3)
+        {
+            return "…";
+        }
+
+        switch (element.ValueKind)
+        {
+            case JsonValueKind.Object:
+                var names = element.EnumerateObject().Select(p => p.Name).OrderBy(n => n, StringComparer.Ordinal);
+                return "{ " + string.Join(", ", names) + " }";
+
+            case JsonValueKind.Array:
+                var items = element.EnumerateArray().ToList();
+                if (items.Count == 0)
+                {
+                    return "[]";
+                }
+
+                return $"[{items.Count} × {Describe(items[0], depth + 1)}]";
+
+            case JsonValueKind.String:
+                return "string";
+
+            case JsonValueKind.Number:
+                return "number";
+
+            case JsonValueKind.True:
+            case JsonValueKind.False:
+                return "bool";
+
+            case JsonValueKind.Null:
+                return "null";
+
+            default:
+                return element.ValueKind.ToString();
+        }
+    }
+
     /// <summary>云端 sandbox 列表（已剔除密钥字段）。</summary>
     private List<JsonElement> SandboxList()
     {
@@ -385,6 +494,78 @@ public sealed class LocalNutstoreData : IDisposable
 
     private static string? JsonString(JsonElement obj, string property)
         => obj.TryGetProperty(property, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString() : null;
+
+    /// <summary>云端沙箱的一条路径权限。</summary>
+    public sealed record PathPerm(string Path, long Caps);
+
+    /// <summary>
+    /// 可以绑定到本地的云端沙箱：存在于云端、但本地还没有绑定。
+    /// </summary>
+    /// <remarks>
+    /// <c>Magic</c> 是客户端内部标识（类似 inode），绑定时必须原样带上；
+    /// 它不是凭据 —— 真正的密钥是 <c>lanSyncCipher</c>，那个永不导出。
+    /// </remarks>
+    public sealed record BindCandidate(
+        long SandboxId,
+        long? Magic,
+        string? Name,
+        IReadOnlyList<PathPerm> PathPerms);
+
+    /// <summary>
+    /// 列出可绑定的云端沙箱（云端有、本地未绑定），带上绑定所需的字段。
+    /// </summary>
+    /// <remarks>
+    /// 数据全部来自本地库的 <c>all_sandbox_list</c> —— 实测它是 SandboxInfo 的
+    /// 序列化形式，含 sandboxId / magic / pathPerms。所以绑定不需要活动的客户端对象，
+    /// 也不需要额外的服务端调用。
+    /// </remarks>
+    public IReadOnlyList<BindCandidate> BindCandidates()
+    {
+        if (!Available)
+        {
+            return [];
+        }
+
+        var mounted = LocalSandboxes()
+            .Where(x => x.SandboxId is not null)
+            .Select(x => x.SandboxId!.Value)
+            .ToHashSet();
+
+        var result = new List<BindCandidate>();
+
+        foreach (var sandbox in SandboxList())
+        {
+            var id = JsonLong(sandbox, "sandboxId");
+            if (id is null || mounted.Contains(id.Value))
+            {
+                continue;
+            }
+
+            var perms = new List<PathPerm>();
+            if (sandbox.TryGetProperty("pathPerms", out var raw) && raw.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var p in raw.EnumerateArray())
+                {
+                    var path = JsonString(p, "path");
+                    var caps = JsonLong(p, "caps");
+
+                    // 缺一不可：权限信息不完整时宁可不给候选，也不要给个残缺的
+                    if (path is not null && caps is not null)
+                    {
+                        perms.Add(new PathPerm(path, caps.Value));
+                    }
+                }
+            }
+
+            result.Add(new BindCandidate(
+                id.Value,
+                JsonLong(sandbox, "magic"),
+                JsonString(sandbox, "name"),
+                perms));
+        }
+
+        return result;
+    }
 
     private static long? JsonLong(JsonElement obj, string property)
         => obj.TryGetProperty(property, out var v) && v.ValueKind == JsonValueKind.Number && v.TryGetInt64(out var n) ? n : null;
