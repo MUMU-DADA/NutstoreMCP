@@ -346,6 +346,35 @@ public sealed class PluginTools
         }
     }
 
+    [McpServerTool(Name = "nutstore_l3_list_cloud_dir", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = true)]
+    [Description("列出云端某个目录下的内容，走客户端自己的实现（不需要任何第三方凭据）。只读操作，不需要解锁令牌。沙箱 ID 与 magic 从 nutstore_l3_sync_folders 或 nutstore_l3_bind_candidates 取。")]
+    public static string L3ListCloudDir(
+        [Description("沙箱 ID")] long sandboxId,
+        [Description("沙箱的内部标识（magic）")] long magic,
+        [Description("云端目录路径，必须以 / 开头；留空表示沙箱根目录")] string? directory = null)
+    {
+        var ui = PluginEntry.Ui;
+        if (ui is null)
+        {
+            return UiUnavailable;
+        }
+
+        try
+        {
+            return ui.ListCloudDirectory(sandboxId, magic, directory ?? "/");
+        }
+        catch (Exception ex)
+        {
+            // 钩子没有这个方法（旧版本）时抛 RemotingException
+            return JsonSerializer.Serialize(new
+            {
+                ok = false,
+                reason = $"{ex.GetType().Name}: {ex.Message}",
+                note = "钩子没有 ListCloudDirectory —— 需要重启客户端让新钩子生效。",
+            }, Indented);
+        }
+    }
+
     [McpServerTool(Name = "nutstore_client_search_types", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
     [Description("按名字子串搜索坚果云客户端的所有类型（跨全部程序集）。用于在不知道类型全名时定位 API。只读，不执行任何客户端代码。")]
     public static string ClientSearchTypes(

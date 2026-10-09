@@ -140,4 +140,10 @@ public interface IUiHook
     /// <see cref="BindSandbox"/> 完成本地绑定。
     /// </remarks>
     string CreateCloudSyncFolder(string name, string description);
+
+    /// <summary>
+    /// 列出云端某个沙箱目录下的内容（走客户端自己的实现）。
+    /// </summary>
+    /// <remarks>只读。返回该目录下的路径列表。</remarks>
+    string ListCloudDirectory(long sandboxId, long magic, string directory);
 }

@@ -584,6 +584,9 @@ public sealed class UiHook : MarshalByRefObject, IUiHook
                         ("name", Prop("Name")),
                         ("localPath", localPath),
                         ("isPlaceholder", Prop("IsPlaceholder")),
+                        // magic 是绑定和列目录都要用的内部标识（类似 inode），
+                        // 不是凭据 —— 真正的密钥 lanSyncCipher / channelId 永不导出。
+                        ("magic", Prop("Magic")),
                         ("localExists", localPath is not null && Directory.Exists(localPath))));
                 }
 
@@ -874,6 +877,98 @@ public sealed class UiHook : MarshalByRefObject, IUiHook
         catch (Exception ex)
         {
             // TargetInvocationException 只是外壳，真正的原因在里层
+            return Json.Obj(
+                ("ok", false),
+                ("reason", ex.GetType().Name + ": " + ex.Message),
+                ("chain", Json.StringArray(Chain(ex))));
+        }
+    }
+
+    /// <summary>
+    /// 列出云端某个沙箱目录下的内容，走客户端自己的实现。
+    /// </summary>
+    /// <remarks>
+    /// 只读。不需要解锁令牌。
+    ///
+    /// 目标是 c05097d346f069f32352068d6ff359701(SandboxIdentifier, string dir, string type)
+    /// → List&lt;string&gt;：内部自动翻页拉全，返回目录下的路径。
+    /// 所有真实调用者都传 type = null。
+    ///
+    /// 它只要 SandboxIdentifier（公开构造 id+magic），不需要本地路径 ——
+    /// 所以对「云端有、本地没绑」的沙箱同样可用。
+    /// </remarks>
+    public string ListCloudDirectory(long sandboxId, long magic, string directory)
+    {
+        try
+        {
+            if (sandboxId <= 0 || magic <= 0)
+            {
+                return Json.Obj(("ok", false), ("reason", "sandboxId / magic 必须为正数"));
+            }
+
+            var dir = string.IsNullOrWhiteSpace(directory) ? "/" : directory.Trim();
+
+            if (!dir.StartsWith("/", StringComparison.Ordinal))
+            {
+                return Json.Obj(("ok", false), ("reason", "云端路径必须以 / 开头: " + dir));
+            }
+
+            const string ApiType = "A.c3795a089d76f103f11c4fe70f38ac8ca";
+            const string ApiMethod = "c05097d346f069f32352068d6ff359701";
+
+            var api = FindClientType(ApiType);
+            var identifierType = FindClientType("Nutstore.Common.SandboxIdentifier");
+
+            if (api is null || identifierType is null)
+            {
+                return Json.Obj(
+                    ("ok", false),
+                    ("reason", "找不到客户端的列目录实现 —— 客户端多半升级了，需要重新反编译确认混淆名。"));
+            }
+
+            var identifier = Activator.CreateInstance(identifierType, sandboxId, magic);
+            if (identifier is null)
+            {
+                return Json.Obj(("ok", false), ("reason", "SandboxIdentifier 构造失败"));
+            }
+
+            // 按参数类型精确取重载：同名方法有好几个
+            var method = api.GetMethod(
+                ApiMethod,
+                BindingFlags.Public | BindingFlags.Static,
+                binder: null,
+                types: new[] { identifierType, typeof(string), typeof(string) },
+                modifiers: null);
+
+            if (method is null)
+            {
+                return Json.Obj(("ok", false), ("reason", "找不到列目录方法（混淆名可能变了）"));
+            }
+
+            var raw = method.Invoke(null, new object[] { identifier, dir, null! }) as System.Collections.IEnumerable;
+            if (raw is null)
+            {
+                return Json.Obj(("ok", false), ("reason", "客户端返回了非集合结果"));
+            }
+
+            var paths = new List<string>();
+            foreach (var item in raw)
+            {
+                if (item is string s)
+                {
+                    paths.Add(s);
+                }
+            }
+
+            return Json.Obj(
+                ("ok", true),
+                ("domain", AppDomain.CurrentDomain.FriendlyName),
+                ("directory", dir),
+                ("count", paths.Count),
+                ("entries", Json.StringArray(paths)));
+        }
+        catch (Exception ex)
+        {
             return Json.Obj(
                 ("ok", false),
                 ("reason", ex.GetType().Name + ": " + ex.Message),
