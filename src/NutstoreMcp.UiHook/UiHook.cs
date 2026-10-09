@@ -2565,6 +2565,101 @@ public sealed class UiHook : MarshalByRefObject, IUiHook
         }
     }
 
+    /// <summary>
+    /// 在云端移动 / 重命名一个对象。
+    /// </summary>
+    /// <remarks>
+    /// 目标：ca22f644cc5eac05e5c099fb105c5b6f5(src, dest, metaUpdates)
+    ///
+    /// 前置条件（反编译确认，不满足会 CheckArgument 失败）：
+    ///   src.Sandbox == dest.Sandbox、两者都不能是根。
+    ///
+    /// 第三参数是 IEnumerable&lt;WriteMetaDataParams&gt;，移动目录时用来给后代
+    /// 更新路径。移动文件传**空集合**即可，但**不能传 null** ——
+    /// 实测传 null 抛 ArgumentNullException（目标是 GetEnumerator()）。
+    /// 空数组实现了 IEnumerable&lt;T&gt;，所以用 Array.CreateInstance 造一个。
+    /// </remarks>
+    public string MoveCloudObject(
+        long sandboxId, long magic, string localRoot, string srcCloudPath, string destCloudPath)
+    {
+        try
+        {
+            if (sandboxId <= 0 || magic <= 0)
+                return Json.Obj(("ok", false), ("reason", "sandboxId / magic 必须为正数"));
+
+            if (string.IsNullOrWhiteSpace(localRoot) || !Path.IsPathRooted(localRoot))
+                return Json.Obj(("ok", false), ("reason", "localRoot 必须是绝对的本地路径"));
+
+            foreach (var (label, p) in new[] { ("srcCloudPath", srcCloudPath), ("destCloudPath", destCloudPath) })
+            {
+                if (string.IsNullOrWhiteSpace(p) || !p.StartsWith("/", StringComparison.Ordinal))
+                    return Json.Obj(("ok", false), ("reason", label + " 必须以 / 开头"));
+                if (p == "/")
+                    return Json.Obj(("ok", false), ("reason", label + " 不能是根目录"));
+            }
+
+            if (string.Equals(srcCloudPath, destCloudPath, StringComparison.Ordinal))
+                return Json.Obj(("ok", false), ("reason", "源和目标相同，无需移动"));
+
+            var api = FindClientType(CloudOpsTypeName);
+            var nsPathType = FindClientType("NutstoreClient.Common.NutstorePath");
+            var metaType = FindClientType("NutstoreClient.Connection.WriteMetaDataParams");
+
+            if (api is null || nsPathType is null || metaType is null)
+                return Json.Obj(("ok", false), ("reason", "找不到云端操作层 / NutstorePath / WriteMetaDataParams"));
+
+            var box = BuildNSSandbox(sandboxId, magic, localRoot, out var boxError);
+            if (box is null) return Json.Obj(("ok", false), ("reason", boxError));
+
+            var fromCloud = nsPathType.GetMethod(
+                "FromNutstorePath", BindingFlags.Public | BindingFlags.Static,
+                binder: null, types: new[] { box.GetType(), typeof(string) }, modifiers: null);
+
+            if (fromCloud is null) return Json.Obj(("ok", false), ("reason", "找不到 NutstorePath.FromNutstorePath"));
+
+            var src = fromCloud.Invoke(null, new[] { box, srcCloudPath });
+            var dest = fromCloud.Invoke(null, new[] { box, destCloudPath });
+
+            if (src is null || dest is null)
+                return Json.Obj(("ok", false), ("reason", "构造 NutstorePath 失败"));
+
+            // 空数组实现了 IEnumerable<WriteMetaDataParams> —— 移动文件够用
+            var emptyMeta = Array.CreateInstance(metaType, 0);
+
+            var method = api.GetMethod(
+                "ca22f644cc5eac05e5c099fb105c5b6f5",
+                BindingFlags.Public | BindingFlags.Static,
+                binder: null,
+                types: new[] { nsPathType, nsPathType, typeof(System.Collections.Generic.IEnumerable<>)
+                    .MakeGenericType(metaType) },
+                modifiers: null);
+
+            if (method is null)
+                return Json.Obj(("ok", false), ("reason", "找不到移动方法（混淆名可能变了）"));
+
+            var results = method.Invoke(null, new[] { src, dest, emptyMeta }) as System.Collections.IEnumerable;
+
+            var moved = 0;
+            if (results is not null)
+            {
+                foreach (var _ in results) moved++;
+            }
+
+            return Json.Obj(
+                ("ok", true),
+                ("domain", AppDomain.CurrentDomain.FriendlyName),
+                ("srcCloudPath", srcCloudPath),
+                ("destCloudPath", destCloudPath),
+                ("resultCount", moved.ToString(CultureInfo.InvariantCulture)),
+                ("note", "移动已提交。最终是否生效由客户端与服务端决定 —— 用 nutstore_l3_list_cloud_dir 复查。"));
+        }
+        catch (Exception ex)
+        {
+            return Json.Obj(("ok", false), ("reason", ex.GetType().Name + ": " + ex.Message),
+                ("chain", Json.StringArray(Chain(ex))));
+        }
+    }
+
     private static string BoolText(object? v) => (v as bool? ?? false) ? "true" : "false";
 
     /// <summary>

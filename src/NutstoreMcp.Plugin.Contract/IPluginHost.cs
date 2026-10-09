@@ -218,4 +218,11 @@ public interface IUiHook
     /// 版本号由本方法内部查（对象详情），调用方不用管。
     /// </remarks>
     string DownloadCloudFile(long sandboxId, long magic, string localRoot, string cloudPath, string destPath);
+
+    /// <summary>
+    /// 在云端移动 / 重命名一个对象。
+    /// </summary>
+    /// <remarks>会改云端。调用方必须先确认源存在、目标不存在。</remarks>
+    string MoveCloudObject(
+        long sandboxId, long magic, string localRoot, string srcCloudPath, string destCloudPath);
 }

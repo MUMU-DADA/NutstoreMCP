@@ -147,6 +147,18 @@ internal static class ClientCallSites
                + "所以调用前先查对象详情拿版本。"),
 
         new(
+            CloudOpsType,
+            "ca22f644cc5eac05e5c099fb105c5b6f5",
+            "在云端移动 / 重命名（MoveCloudObject）",
+            Mutates: true,
+            Why: "**会改云端** —— 这是第一个真正修改云端的能力。"
+               + "守卫：解锁令牌 + confirm + dryRun 默认真；执行前实际列出云端目录，"
+               + "核对源存在、目标不存在（只做重命名语义，绝不覆盖）；"
+               + "客户端自身还要求同沙箱、非根。"
+               + "实测传给第三参数 null 会抛 ArgumentNullException 且**移动不会发生**，"
+               + "所以用空数组（实现 IEnumerable<T>）。"),
+
+        new(
             "NutstoreClient.Common.NutstorePath",
             "FromNutstorePath",
             "由云端路径构造 NutstorePath（DownloadCloudFile 的前置）",

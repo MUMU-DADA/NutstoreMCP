@@ -1082,6 +1082,123 @@ public sealed class PluginTools
             return Error(ex);
         }
     }
+    [McpServerTool(Name = "nutstore_l3_move", ReadOnly = false, Destructive = false, Idempotent = false, OpenWorld = true)]
+    [Description("【默认只预演】**改云端**：在同一个同步文件夹内移动或重命名一个对象。守卫：解锁令牌 + confirm=true + dryRun=false，且**目标已存在一律拒绝**（绝不覆盖）。执行前会自动核对源存在、目标不存在。")]
+    public static string L3Move(
+        [Description("沙箱 ID")] long sandboxId,
+        [Description("沙箱的内部标识（magic）")] long magic,
+        [Description("源云端路径，必须以 / 开头")] string srcCloudPath,
+        [Description("目标云端路径，必须以 / 开头，且不能已存在")] string destCloudPath,
+        [Description("必须显式传 true 才可能执行")] bool confirm = false,
+        [Description("默认 true（只预演不执行）")] bool dryRun = true)
+    {
+        var ui = PluginEntry.Ui;
+        if (ui is null) return UiUnavailable;
+
+        try
+        {
+            var refusals = new List<string>();
+            var unlocked = PluginEntry.IsWriteUnlocked();
+
+            if (!unlocked)
+                refusals.Add("未解锁。把内容为 yes 的令牌文件放到 %LOCALAPPDATA%\\NutstoreMcp\\l3-write.enabled。");
+
+            if (!confirm) refusals.Add("调用方没有传 confirm=true。");
+
+            foreach (var (label, p) in new[] { ("srcCloudPath", srcCloudPath), ("destCloudPath", destCloudPath) })
+            {
+                if (string.IsNullOrWhiteSpace(p) || !p.StartsWith("/", StringComparison.Ordinal))
+                    refusals.Add(label + " 必须以 / 开头。");
+                else if (p == "/")
+                    refusals.Add(label + " 不能是根目录。");
+            }
+
+            if (string.Equals(srcCloudPath, destCloudPath, StringComparison.Ordinal))
+                refusals.Add("源和目标相同。");
+
+            // 沙箱身份检查（localRoot 要给它）+ 源/目标的实际存在性核对
+            string? root = null;
+            using (var doc = JsonDocument.Parse(ui.ReadClientSyncFolders()))
+            {
+                if (doc.RootElement.TryGetProperty("sandboxes", out var list))
+                {
+                    foreach (var s in list.EnumerateArray())
+                    {
+                        var id = s.TryGetProperty("id", out var i) && long.TryParse(i.GetString(), out var pid) ? pid : 0;
+                        if (id == sandboxId)
+                        {
+                            root = s.TryGetProperty("localPath", out var lp) ? lp.GetString() : null;
+                            break;
+                        }
+                    }
+                }
+            }
+
+            if (string.IsNullOrWhiteSpace(root))
+                refusals.Add($"沙箱 {sandboxId} 没有本地路径 —— 移动需要该沙箱已绑定到本地。");
+
+            // 源必须存在、目标必须不存在 —— 这是「绝不覆盖」的实际依据
+            if (refusals.Count == 0)
+            {
+                var listing = ui.ListCloudDirectory(sandboxId, magic, "/");
+                using var doc = JsonDocument.Parse(listing);
+
+                if (doc.RootElement.TryGetProperty("entries", out var entries))
+                {
+                    var all = entries.EnumerateArray().Select(e => e.GetString() ?? string.Empty).ToList();
+
+                    if (!all.Contains(srcCloudPath, StringComparer.Ordinal))
+                        refusals.Add($"源在云端不存在: {srcCloudPath}");
+
+                    if (all.Contains(destCloudPath, StringComparer.Ordinal))
+                        refusals.Add($"目标已存在，拒绝覆盖: {destCloudPath}");
+                }
+                else
+                {
+                    refusals.Add("列不出云端目录，无法核对源与目标 —— 拒绝执行。");
+                }
+            }
+
+            string? result = null;
+            var executed = false;
+
+            if (refusals.Count == 0 && !dryRun)
+            {
+                try
+                {
+                    result = ui.MoveCloudObject(sandboxId, magic, root!, srcCloudPath, destCloudPath);
+                    executed = true;
+                }
+                catch (Exception ex)
+                {
+                    refusals.Add($"调用客户端实现失败: {ex.GetType().Name}: {ex.Message}");
+                }
+            }
+
+            return JsonSerializer.Serialize(new
+            {
+                allowed = refusals.Count == 0,
+                wouldWrite = refusals.Count == 0 && !dryRun && executed,
+                dryRun,
+                unlockVariablePresent = unlocked,
+                probe = new { sandboxId, magic, srcCloudPath, destCloudPath },
+                refusals,
+                notes = new[]
+                {
+                    "**这会改云端。** 只在同一个同步文件夹内移动，不跨沙箱。",
+                    "目标已存在一律拒绝 —— 也就是只做重命名语义，绝不覆盖。",
+                    "执行前会实际列出云端目录核对源存在、目标不存在。",
+                    "客户端还要求源和目标都不是根目录。",
+                },
+                executed,
+                result,
+            }, Indented);
+        }
+        catch (Exception ex)
+        {
+            return Error(ex);
+        }
+    }
     [McpServerTool(Name = "nutstore_client_search_types", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
     [Description("按名字子串搜索坚果云客户端的所有类型（跨全部程序集）。用于在不知道类型全名时定位 API。只读，不执行任何客户端代码。")]
     public static string ClientSearchTypes(
