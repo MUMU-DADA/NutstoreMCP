@@ -2128,7 +2128,10 @@ public sealed partial class UiHook : MarshalByRefObject, IUiHook
                 ("shared", "true"),
                 ("domain", AppDomain.CurrentDomain.FriendlyName),
                 ("localFilePath", localFilePath),
-                ("url", Get(info, "Url")?.ToString()),
+
+                // 故意不返回 Url：那是**持权公开链接**，本身就是访问凭证
+                // （Outlook 加载项就是把它直接写进外发邮件正文的）。
+                // 会话头也只是 Base64(用户名):Base64(机器名):SessionToken，同样不外传。
                 ("version", Get(info, "Version")?.ToString()),
 
                 // 密码只报有没有，不报值

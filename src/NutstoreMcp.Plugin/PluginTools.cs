@@ -811,7 +811,7 @@ public sealed partial class PluginTools
     }
 
     [McpServerTool(Name = "nutstore_l3_share_info", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = true)]
-    [Description("读某个本地文件在云端的分享状态（分享链接、是否设了密码、过期时间、是否禁止下载等）。只读，不需要解锁令牌。传本地文件路径即可。**分享密码不导出**，只报是否设了密码。")]
+    [Description("读某个本地文件在云端的分享状态：是否分享、版本、公开级别、是否有密码、过期时间、是否禁止下载、是否允许上传。只读，不需要解锁令牌，传本地文件路径即可。**不导出分享链接本身**（那是持权公开链接，等于访问凭证）**也不导出密码值**，只报有没有设密码；被邀请者名单与组名单同样不导出。注意：客户端入口只能建立分享、不能取消分享，要取消得走网页端。")]
     public static string L3ShareInfo([Description("本地文件的绝对路径")] string localFilePath)
     {
         var ui = PluginEntry.Ui;
