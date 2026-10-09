@@ -1039,6 +1039,27 @@ public sealed class UiHook : MarshalByRefObject, IUiHook
 
             foreach (var prop in serviceType.GetProperties(BindingFlags.Public | BindingFlags.Instance))
             {
+                // 先看属性的**静态类型**再决定要不要读值。
+                //
+                // 直接对每个属性调 GetValue 会连 Storage / Proxy 的 getter 一起调用 ——
+                // 那两个不是 ConfigureItem，getter 里可能有磁盘 I/O 或其他副作用。
+                // 一个标着「只读」的工具不该因为读设置而触发那些。
+                var propType = prop.PropertyType;
+                var isConfigureItem = propType.IsGenericType
+                    && propType.GetGenericTypeDefinition().Name == "ConfigureItem`1";
+
+                if (!isConfigureItem)
+                {
+                    // 只报类型，不读值
+                    raw.Append(first ? string.Empty : ",")
+                       .Append(Json.Quote(prop.Name))
+                       .Append(":{\"type\":").Append(Json.Quote(propType.Name))
+                       .Append(",\"value\":\"（未读取 —— 不是 ConfigureItem，getter 可能有副作用）\"}");
+                    first = false;
+                    items.Add(prop.Name);
+                    continue;
+                }
+
                 object? item;
                 try
                 {
@@ -1046,7 +1067,6 @@ public sealed class UiHook : MarshalByRefObject, IUiHook
                 }
                 catch (Exception ex)
                 {
-                    item = null;
                     raw.Append(first ? string.Empty : ",").Append(Json.Quote(prop.Name))
                        .Append(":{\"error\":").Append(Json.Quote(ex.GetType().Name)).Append('}');
                     first = false;
@@ -1058,8 +1078,6 @@ public sealed class UiHook : MarshalByRefObject, IUiHook
                     continue;
                 }
 
-                // 值在 ConfigureItem<T>.Value 上；Proxy / Storage 这类不是 ConfigureItem，
-                // 取不到 Value 就只报它的类型名
                 var valueProp = item.GetType().GetProperty("Value", BindingFlags.Public | BindingFlags.Instance);
 
                 string rendered;
