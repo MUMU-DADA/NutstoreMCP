@@ -78,6 +78,20 @@ public static class CloudWriteOperations
     /// </summary>
     public const int MaxContentBytes = 262144;
 
+    /// <summary>上界对应的 base64 长度（含 padding）。</summary>
+    public const int MaxEncodedLength = ((MaxContentBytes + 2) / 3) * 4;
+
+    /// <summary>
+    /// 先按编码长度挡一次，再去解码。
+    /// 目的是**不为超大输入先解出一大块内存** —— base64 解码发生在守卫之前，
+    /// 没有这道检查的话，一个远超上限的请求会先被完整解码进内存才被拒绝。
+    /// 带换行的编码会偏大而被拒；调用方应传紧凑 base64。
+    /// </summary>
+    public static string? ValidateEncodedLength(int encodedLength)
+        => encodedLength > MaxEncodedLength
+            ? "内容超过 " + MaxContentBytes + " 字节上限（base64 长度 " + encodedLength + " > " + MaxEncodedLength + "）。"
+            : null;
+
     /// <summary>
     /// B2/C3 受限创建：在**本次调用新建、且建后确认为空**的目录里创建一个新文件。
     ///

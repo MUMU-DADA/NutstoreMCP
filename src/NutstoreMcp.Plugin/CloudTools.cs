@@ -75,6 +75,13 @@ public sealed partial class PluginTools
         if (ui is null) return UiUnavailable;
 
         var encoded = contentBase64 ?? string.Empty;
+
+        // 先按编码长度挡一次，再去解码：解码发生在守卫之前，不挡的话一个远超上限的
+        // 请求会先被完整解进内存才被拒绝。
+        var lengthError = CloudWriteOperations.ValidateEncodedLength(encoded.Length);
+        if (lengthError is not null)
+            return JsonSerializer.Serialize(new { ok = false, reason = lengthError }, Indented);
+
         byte[] content;
         try
         {

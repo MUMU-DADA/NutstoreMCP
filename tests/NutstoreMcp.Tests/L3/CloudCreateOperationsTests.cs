@@ -232,6 +232,16 @@ public class CloudCreateOperationsTests
             error => error.GetString()!.Contains("唯一出现"));
     }
 
+    [Fact]
+    public void 编码长度检查在解码之前挡住超大输入()
+    {
+        // 上限：262144 字节 → ceil(n/3)*4 = 349528 个 base64 字符
+        Assert.Equal(349528, CloudWriteOperations.MaxEncodedLength);
+        Assert.Null(CloudWriteOperations.ValidateEncodedLength(0));
+        Assert.Null(CloudWriteOperations.ValidateEncodedLength(CloudWriteOperations.MaxEncodedLength));
+        Assert.NotNull(CloudWriteOperations.ValidateEncodedLength(CloudWriteOperations.MaxEncodedLength + 1));
+    }
+
     private static bool Flag(JsonDocument result, string name) => result.RootElement.GetProperty(name).GetBoolean();
 
     private sealed record Item(string Type, bool Deleted, long Version, long Size, string Hash);
