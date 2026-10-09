@@ -100,6 +100,20 @@ internal static class ClientCallSites
             "读沙箱权限（ReadSyncFolderDetail）",
             Mutates: false,
             Why: "纯读。只按 SandboxIdentifier 查询各路径的权限位，不写任何东西。"),
+
+        new(
+            CloudOpsType,
+            "c2654043f830c74ecf5925237786dccea",
+            "读文件历史版本（ListFileVersions）",
+            Mutates: false,
+            Why: "纯读。只按 NutstorePath 查询该文件的版本列表，不恢复、不修改任何版本。"),
+
+        new(
+            "NutstoreClient.Common.NutstorePath",
+            "FromAbsolutePath",
+            "由本地绝对路径构造 NutstorePath（ListFileVersions 的前置）",
+            Mutates: false,
+            Why: "纯读。它只把路径分解成沙箱 + 云端路径两段，不发任何请求、不写任何东西。"),
     ];
 
     /// <summary>按方法名查登记项。</summary>

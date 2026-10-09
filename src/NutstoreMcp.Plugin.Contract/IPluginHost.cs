@@ -172,4 +172,13 @@ public interface IUiHook
 
     /// <summary>读某个同步文件夹的详情与权限。只读。</summary>
     string ReadSyncFolderDetail(long sandboxId, long magic);
+
+    /// <summary>
+    /// 读某个本地文件的云端历史版本列表。只读。
+    /// </summary>
+    /// <remarks>
+    /// 参数都由调用方给全（沙箱身份、本地根、文件绝对路径），
+    /// 钩子只负责构造 NutstorePath 并发请求 —— 不在钩子里重复读数据库。
+    /// </remarks>
+    string ListFileVersions(long sandboxId, long magic, string localRoot, string localFilePath);
 }

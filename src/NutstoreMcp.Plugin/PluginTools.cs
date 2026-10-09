@@ -691,6 +691,123 @@ public sealed class PluginTools
         }
     }
 
+    [McpServerTool(Name = "nutstore_l3_file_versions", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = true)]
+    [Description("列出某个本地文件在云端的历史版本（走客户端自己的实现）。只读，不需要解锁令牌。传本地文件路径即可 —— 会按路径匹配到对应的同步文件夹。返回每个版本的编号、操作类型、编辑者、时间和大小。")]
+    public static string L3FileVersions([Description("本地文件的绝对路径")] string localFilePath)
+    {
+        var ui = PluginEntry.Ui;
+        if (ui is null)
+        {
+            return UiUnavailable;
+        }
+
+        try
+        {
+            if (string.IsNullOrWhiteSpace(localFilePath) || !Path.IsPathRooted(localFilePath))
+            {
+                return JsonSerializer.Serialize(new
+                {
+                    ok = false,
+                    reason = "需要绝对的本地文件路径。",
+                }, Indented);
+            }
+
+            // 用已经验证过的接口拿沙箱列表 —— 不在钩子里重复一遍数据库读取。
+            //
+            // 注意：JsonElement 只在 JsonDocument 存活期间有效。原来把 doc 放在
+            // using 里、出了 try 再用 sandboxes，读的就是已释放的内存 ——
+            // 所以这里必须在 try 内就把需要的字段提出来。
+            var roots = new List<(string Root, long Id, long Magic)>();
+
+            try
+            {
+                using var doc = JsonDocument.Parse(ui.ReadClientSyncFolders());
+
+                if (!doc.RootElement.TryGetProperty("sandboxes", out var sandboxes))
+                {
+                    return JsonSerializer.Serialize(new
+                    {
+                        ok = false,
+                        reason = "读同步文件夹列表失败，无法确定这个文件属于哪个沙箱。",
+                        raw = doc.RootElement.GetRawText(),
+                    }, Indented);
+                }
+
+                foreach (var s in sandboxes.EnumerateArray())
+                {
+                    var local = s.TryGetProperty("localPath", out var lp) ? lp.GetString() : null;
+                    if (string.IsNullOrWhiteSpace(local))
+                    {
+                        continue;
+                    }
+
+                    var id = s.TryGetProperty("id", out var idEl)
+                        && long.TryParse(idEl.GetString(), out var parsedId) ? parsedId : 0;
+
+                    var magic = s.TryGetProperty("magic", out var mEl)
+                        && long.TryParse(mEl.GetString(), out var parsedMagic) ? parsedMagic : 0;
+
+                    if (id > 0 && magic > 0)
+                    {
+                        roots.Add((local!.TrimEnd('\\', '/'), id, magic));
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                return JsonSerializer.Serialize(new
+                {
+                    ok = false,
+                    reason = $"解析同步文件夹列表失败: {ex.Message}",
+                }, Indented);
+            }
+
+            // 取匹配最长的那个（同步根可以嵌套，最短的会选错）
+            string? bestPath = null;
+            long bestId = 0;
+            long bestMagic = 0;
+
+            foreach (var (root, id, magic) in roots)
+            {
+                if (!localFilePath.StartsWith(root + "\\", StringComparison.OrdinalIgnoreCase)
+                    && !localFilePath.StartsWith(root + "/", StringComparison.OrdinalIgnoreCase)
+                    && !string.Equals(localFilePath, root, StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                if (bestPath is null || root.Length > bestPath.Length)
+                {
+                    bestPath = root;
+                    bestId = id;
+                    bestMagic = magic;
+                }
+            }
+
+            if (bestPath is null)
+            {
+                return JsonSerializer.Serialize(new
+                {
+                    ok = false,
+                    reason = "这个路径不在任何已绑定的同步文件夹里。"
+                           + "版本历史需要文件属于某个本地已绑定的同步文件夹。",
+                    checkedSandboxes = roots.Count,
+                }, Indented);
+            }
+
+            return ui.ListFileVersions(bestId, bestMagic, bestPath, localFilePath);
+        }
+        catch (Exception ex)
+        {
+            return JsonSerializer.Serialize(new
+            {
+                ok = false,
+                reason = $"{ex.GetType().Name}: {ex.Message}",
+                note = "钩子没有 ListFileVersions —— 需要重启客户端让新钩子生效。",
+            }, Indented);
+        }
+    }
+
     [McpServerTool(Name = "nutstore_client_search_types", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
     [Description("按名字子串搜索坚果云客户端的所有类型（跨全部程序集）。用于在不知道类型全名时定位 API。只读，不执行任何客户端代码。")]
     public static string ClientSearchTypes(

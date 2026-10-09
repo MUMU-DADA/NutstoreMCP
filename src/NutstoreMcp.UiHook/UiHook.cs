@@ -1658,7 +1658,8 @@ public sealed class UiHook : MarshalByRefObject, IUiHook
                 ("ok", true),
                 ("domain", AppDomain.CurrentDomain.FriendlyName),
                 ("nickName", Get(bean, "nickName")?.ToString()),
-                ("userChannel", Get(bean, "userChannel")?.ToString()),
+                // userChannel 是不透明的账号关联标识，没有任何诊断价值 —— 不导出。
+                // 和 webdomain / cometSubServer 同样的理由：不该外传的内部信息。
                 ("isPaidUser", BoolText(Get(bean, "isPaidUser"))),
                 ("isInTeam", BoolText(Get(bean, "isInTeam"))),
                 ("onlineEdit", BoolText(Get(bean, "onlineEdit"))),
@@ -1808,6 +1809,158 @@ public sealed class UiHook : MarshalByRefObject, IUiHook
                 ("permCount", perms.Count.ToString(CultureInfo.InvariantCulture)),
                 ("permPaths", new Json.Raw("[" + string.Join(",", perms) + "]")),
                 ("permsError", permsError));
+        }
+        catch (Exception ex)
+        {
+            return Json.Obj(
+                ("ok", false),
+                ("reason", ex.GetType().Name + ": " + ex.Message),
+                ("chain", Json.StringArray(Chain(ex))));
+        }
+    }
+
+    /// <summary>
+    /// 读某个本地文件的云端历史版本列表。只读。
+    /// </summary>
+    /// <remarks>
+    /// 目标：c2654043f830c74ecf5925237786dccea(NutstorePath) → List&lt;FileVersionObjectInfo&gt;
+    ///   { Version, OpType, Operation, EditorNickname, EditorAccount,
+    ///     Time, FileSize, AltPath }
+    ///
+    /// 为什么要三个参数而不是一个本地路径：NutstorePath 的构造函数要求
+    /// **绝对的本地路径**（Path.IsPathRooted），而且它要从 NSSandbox 推出沙箱身份。
+    /// 沙箱列表的读取逻辑已经在 ReadClientSyncFolders 里了，
+    /// 这里不重复一遍 —— 由调用方把已经拿到的身份传进来。
+    /// </remarks>
+    public string ListFileVersions(long sandboxId, long magic, string localRoot, string localFilePath)
+    {
+        try
+        {
+            if (sandboxId <= 0 || magic <= 0)
+            {
+                return Json.Obj(("ok", false), ("reason", "sandboxId / magic 必须为正数"));
+            }
+
+            if (string.IsNullOrWhiteSpace(localRoot) || !Path.IsPathRooted(localRoot))
+            {
+                return Json.Obj(("ok", false), ("reason", "localRoot 必须是绝对的本地路径"));
+            }
+
+            if (string.IsNullOrWhiteSpace(localFilePath) || !Path.IsPathRooted(localFilePath))
+            {
+                return Json.Obj(("ok", false), ("reason", "localFilePath 必须是绝对的本地路径"));
+            }
+
+            var api = FindClientType(CloudOpsTypeName);
+            var nsSandboxType = FindClientType("NutstoreClient.Common.NSSandbox");
+            var nsPathType = FindClientType("NutstoreClient.Common.NutstorePath");
+
+            if (api is null || nsSandboxType is null || nsPathType is null)
+            {
+                return Json.Obj(("ok", false), ("reason", "找不到云端操作层 / NSSandbox / NutstorePath（版本可能变了）"));
+            }
+
+            // NSSandbox(long id, long magic, string localAbsPath, bool allowUncPath)
+            var sandbox = Activator.CreateInstance(
+                nsSandboxType,
+                BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+                binder: null,
+                args: new object[] { sandboxId, magic, localRoot, false },
+                culture: null);
+
+            if (sandbox is null)
+            {
+                return Json.Obj(("ok", false), ("reason", "NSSandbox 构造失败"));
+            }
+
+            var fromAbsolute = nsPathType.GetMethod(
+                "FromAbsolutePath",
+                BindingFlags.Public | BindingFlags.Static,
+                binder: null,
+                types: new[] { nsSandboxType, typeof(string) },
+                modifiers: null);
+
+            if (fromAbsolute is null)
+            {
+                return Json.Obj(("ok", false), ("reason", "找不到 NutstorePath.FromAbsolutePath"));
+            }
+
+            var nsPath = fromAbsolute.Invoke(null, new[] { sandbox, localFilePath });
+            if (nsPath is null)
+            {
+                return Json.Obj(("ok", false), ("reason", "构造 NutstorePath 返回 null"));
+            }
+
+            var method = api.GetMethod(
+                "c2654043f830c74ecf5925237786dccea",
+                BindingFlags.Public | BindingFlags.Static,
+                binder: null,
+                types: new[] { nsPathType },
+                modifiers: null);
+
+            if (method is null)
+            {
+                return Json.Obj(("ok", false), ("reason", "找不到版本历史方法（混淆名可能变了）"));
+            }
+
+            var versions = method.Invoke(null, new[] { nsPath }) as System.Collections.IEnumerable;
+            var items = new List<string>();
+            var count = 0;
+
+            if (versions is not null)
+            {
+                foreach (var v in versions)
+                {
+                    if (v is null)
+                    {
+                        continue;
+                    }
+
+                    count++;
+                    var rawTime = AsLong(Get(v, "Time"));
+
+                    // Time 的单位没有文档。实测传进 FromUnixTimeSeconds 会抛
+                    // ArgumentOutOfRangeException，说明它不是秒 —— 按数量级判断，
+                    // 而不是猜死一个单位（猜错就是整个工具报错，而不是少一个字段）。
+                    // 253402300799 = 9999-12-31T23:59:59Z 的秒数，超过它只可能是毫秒。
+                    string? timeText = null;
+                    if (rawTime > 0)
+                    {
+                        try
+                        {
+                            timeText = (rawTime > 253402300799L
+                                    ? DateTimeOffset.FromUnixTimeMilliseconds(rawTime)
+                                    : DateTimeOffset.FromUnixTimeSeconds(rawTime))
+                                .LocalDateTime.ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture);
+                        }
+                        catch (Exception)
+                        {
+                            // 换算不了就只给原始值，不让它拖垮整次调用
+                            timeText = null;
+                        }
+                    }
+
+                    items.Add(Json.Obj(
+                        ("version", Get(v, "Version")?.ToString()),
+                        ("operation", Get(v, "Operation")?.ToString()),
+                        ("opType", Get(v, "OpType")?.ToString()),
+                        ("editor", Get(v, "EditorNickname")?.ToString()),
+                        ("editorAccount", Get(v, "EditorAccount")?.ToString()),
+                        ("hasNickname", BoolText(Get(v, "HasNickname"))),
+                        ("timeRaw", rawTime.ToString(CultureInfo.InvariantCulture)),
+                        ("time", timeText),
+                        ("fileSize", Human(AsLong(Get(v, "FileSize")))),
+                        ("altPath", Get(v, "AltPath")?.ToString())));
+                }
+            }
+
+            return Json.Obj(
+                ("ok", true),
+                ("domain", AppDomain.CurrentDomain.FriendlyName),
+                ("localFilePath", localFilePath),
+                ("cloudPath", nsPath.ToString()),
+                ("count", count.ToString(CultureInfo.InvariantCulture)),
+                ("versions", new Json.Raw("[" + string.Join(",", items) + "]")));
         }
         catch (Exception ex)
         {
