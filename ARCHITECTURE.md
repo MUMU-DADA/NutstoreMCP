@@ -594,6 +594,26 @@ static NutstorePath FromNutstorePath(NSSandbox sandbox, string nutstorePath)
 「找不到类型/方法」，报「客户端多半升级了，需要重新反编译」，
 而不是静默失败。
 
+### 已核对：我们的调用与客户端自己的调用一致
+
+建同步文件夹这一处逐项对过反编译源码，两侧相同：
+
+```csharp
+// 客户端 GUI 的调用（c9a86b35...cs）
+SandboxACL acl = SandboxACL.GetDefaultPerm();
+SandboxInfo info = c3795a08....ccdd0d73...("名字", string.Empty, acl, doNotSync: false);
+```
+
+核对过的两点：
+
+1. **`GetDefaultPerm()` 每次新建实例**（`new SandboxACL(SandboxPermission.NO_RIGHT)`）——
+   所以目标方法内部对它调 `RemoveUnusedData()`（会改写它）不会污染任何共享状态。
+   如果它返回的是静态单例，那就是我们把客户端的默认权限改坏了。
+2. **ACL 来源一致** —— 用的是同一个 `GetDefaultPerm()`，不是自己拼的权限。
+
+`NO_RIGHT` 不是「建出来没有权限」：创建者是 owner，这个 ACL 描述的是
+「其他用户没有额外权限」。
+
 ### 契约两处部署的检查
 
 契约 DLL 在程序目录和插件目录各一份。`build.ps1` 会比对**接口方法清单**
