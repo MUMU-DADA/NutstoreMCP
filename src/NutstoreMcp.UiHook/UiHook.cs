@@ -1971,6 +1971,324 @@ public sealed class UiHook : MarshalByRefObject, IUiHook
         }
     }
 
+    /// <summary>
+    /// 由本地文件路径构造 NutstorePath。构造不出来时返回原因。
+    /// </summary>
+    /// <remarks>
+    /// A4（版本历史）和 A7（分享状态）都要这一步，抽出来避免两份拷贝漂移。
+    /// </remarks>
+    private static object? BuildNutstorePath(
+        long sandboxId, long magic, string localRoot, string localFilePath, out string? error)
+    {
+        error = null;
+
+        var nsSandboxType = FindClientType("NutstoreClient.Common.NSSandbox");
+        var nsPathType = FindClientType("NutstoreClient.Common.NutstorePath");
+
+        if (nsSandboxType is null || nsPathType is null)
+        {
+            error = "找不到 NSSandbox 或 NutstorePath（版本可能变了）";
+            return null;
+        }
+
+        var sandbox = Activator.CreateInstance(
+            nsSandboxType,
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+            binder: null,
+            args: new object[] { sandboxId, magic, localRoot, false },
+            culture: null);
+
+        if (sandbox is null)
+        {
+            error = "NSSandbox 构造失败";
+            return null;
+        }
+
+        var fromAbsolute = nsPathType.GetMethod(
+            "FromAbsolutePath",
+            BindingFlags.Public | BindingFlags.Static,
+            binder: null,
+            types: new[] { nsSandboxType, typeof(string) },
+            modifiers: null);
+
+        if (fromAbsolute is null)
+        {
+            error = "找不到 NutstorePath.FromAbsolutePath";
+            return null;
+        }
+
+        var nsPath = fromAbsolute.Invoke(null, new[] { sandbox, localFilePath });
+        if (nsPath is null)
+        {
+            error = "构造 NutstorePath 返回 null";
+        }
+
+        return nsPath;
+    }
+
+    /// <summary>校验 A4 / A7 共用的四个入参。</summary>
+    private static string? CheckPathArgs(long sandboxId, long magic, string localRoot, string localFilePath)
+    {
+        if (sandboxId <= 0 || magic <= 0)
+        {
+            return "sandboxId / magic 必须为正数";
+        }
+
+        if (string.IsNullOrWhiteSpace(localRoot) || !Path.IsPathRooted(localRoot))
+        {
+            return "localRoot 必须是绝对的本地路径";
+        }
+
+        if (string.IsNullOrWhiteSpace(localFilePath) || !Path.IsPathRooted(localFilePath))
+        {
+            return "localFilePath 必须是绝对的本地路径";
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// 读某个本地文件在云端的分享/发布状态。只读。
+    /// </summary>
+    /// <remarks>
+    /// 目标：c9a9142ba46c6a4cdb6c70a448962ca9e(NutstorePath) → PublishedObjectInfo
+    ///   { Url, Version, ACL, Aclist, Groups, GroupIds, ShareOutOfTeamDisabled,
+    ///     DownloadDisabled, EnableUpload, ExpireMillsSinceEpoch, Password }
+    ///
+    /// **Password 是分享密码，不导出值** —— 只报是否设了密码。
+    /// 调用方能知道「这个分享有密码保护」，但拿不到密码本身。
+    /// </remarks>
+    public string ReadShareInfo(long sandboxId, long magic, string localRoot, string localFilePath)
+    {
+        try
+        {
+            var argError = CheckPathArgs(sandboxId, magic, localRoot, localFilePath);
+            if (argError is not null)
+            {
+                return Json.Obj(("ok", false), ("reason", argError));
+            }
+
+            var api = FindClientType(CloudOpsTypeName);
+            if (api is null)
+            {
+                return Json.Obj(("ok", false), ("reason", "找不到客户端的云端操作层（版本可能变了）"));
+            }
+
+            var nsPath = BuildNutstorePath(sandboxId, magic, localRoot, localFilePath, out var pathError);
+            if (nsPath is null)
+            {
+                return Json.Obj(("ok", false), ("reason", pathError));
+            }
+
+            var nsPathType = nsPath.GetType();
+            var method = api.GetMethod(
+                "c9a9142ba46c6a4cdb6c70a448962ca9e",
+                BindingFlags.Public | BindingFlags.Static,
+                binder: null,
+                types: new[] { nsPathType },
+                modifiers: null);
+
+            if (method is null)
+            {
+                return Json.Obj(("ok", false), ("reason", "找不到分享状态方法（混淆名可能变了）"));
+            }
+
+            var info = method.Invoke(null, new[] { nsPath });
+            if (info is null)
+            {
+                // 没有分享过 —— 这不是错误，是「未分享」
+                return Json.Obj(
+                    ("ok", true),
+                    ("shared", "false"),
+                    ("note", "客户端没有返回分享信息，通常表示这个文件没有分享过。"));
+            }
+
+            var expireMills = AsLong(Get(info, "ExpireMillsSinceEpoch"));
+            string? expireText = null;
+
+            if (expireMills > 0)
+            {
+                try
+                {
+                    expireText = DateTimeOffset.FromUnixTimeMilliseconds(expireMills)
+                        .LocalDateTime.ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture);
+                }
+                catch (Exception)
+                {
+                    expireText = null;
+                }
+            }
+
+            var password = Get(info, "Password") as string;
+
+            return Json.Obj(
+                ("ok", true),
+                ("shared", "true"),
+                ("domain", AppDomain.CurrentDomain.FriendlyName),
+                ("localFilePath", localFilePath),
+                ("url", Get(info, "Url")?.ToString()),
+                ("version", Get(info, "Version")?.ToString()),
+
+                // 密码只报有没有，不报值
+                ("hasPassword", string.IsNullOrEmpty(password) ? "false" : "true"),
+
+                ("expireMillsSinceEpoch", expireMills.ToString(CultureInfo.InvariantCulture)),
+                ("expireAt", expireText),
+                ("downloadDisabled", BoolText(Get(info, "DownloadDisabled"))),
+                ("uploadEnabled", BoolText(Get(info, "EnableUpload"))),
+                ("shareOutOfTeamDisabled", BoolText(Get(info, "ShareOutOfTeamDisabled"))),
+                ("acl", Get(info, "ACL")?.ToString()),
+                ("groupIds", Get(info, "GroupIds")?.ToString()),
+                ("accountCount", (Get(info, "Aclist") as System.Collections.ICollection)?.Count.ToString(CultureInfo.InvariantCulture)));
+        }
+        catch (Exception ex)
+        {
+            // 「没有分享过」客户端是**抛异常**，不是返回 null。
+            // 那是正常状态不是故障 —— 报成错误会让调用方以为是我们坏了。
+            var text = Chain(ex);
+            var joined = string.Join(" | ", text);
+
+            if (joined.IndexOf("ObjectNotFound", StringComparison.OrdinalIgnoreCase) >= 0
+                || joined.IndexOf("pub object can not be found", StringComparison.OrdinalIgnoreCase) >= 0)
+            {
+                return Json.Obj(
+                    ("ok", true),
+                    ("shared", "false"),
+                    ("reason", "这个文件没有分享过。"),
+                    ("errorCode", "ObjectNotFound"));
+            }
+
+            return Json.Obj(
+                ("ok", false),
+                ("reason", ex.GetType().Name + ": " + ex.Message),
+                ("chain", Json.StringArray(text)));
+        }
+    }
+
+    /// <summary>
+    /// 读协作联系人列表。只读。
+    /// </summary>
+    /// <remarks>
+    /// 目标：c915cc8f3fd71da2191b3d1dff9bbda1f() → ContactList
+    ///   { InTeam, Invited, Others }，每项是 List&lt;Contact&gt; { NickName, Account }
+    /// </remarks>
+    public string ReadContacts()
+    {
+        try
+        {
+            var api = FindClientType(CloudOpsTypeName);
+            if (api is null)
+            {
+                return Json.Obj(("ok", false), ("reason", "找不到客户端的云端操作层（版本可能变了）"));
+            }
+
+            var method = api.GetMethod(
+                "c915cc8f3fd71da2191b3d1dff9bbda1f",
+                BindingFlags.Public | BindingFlags.Static,
+                binder: null,
+                types: Type.EmptyTypes,
+                modifiers: null);
+
+            if (method is null)
+            {
+                return Json.Obj(("ok", false), ("reason", "找不到联系人方法（混淆名可能变了）"));
+            }
+
+            var list = method.Invoke(null, null);
+            if (list is null)
+            {
+                return Json.Obj(("ok", false), ("reason", "客户端返回 null"));
+            }
+
+            (string Json, int Count) Render(string prop)
+            {
+                var items = new List<string>();
+
+                if (Get(list, prop) is System.Collections.IEnumerable seq)
+                {
+                    foreach (var c in seq)
+                    {
+                        if (c is null)
+                        {
+                            continue;
+                        }
+
+                        items.Add(Json.Obj(
+                            ("nickName", Get(c, "NickName")?.ToString()),
+                            ("account", Get(c, "Account")?.ToString())));
+                    }
+                }
+
+                return ("[" + string.Join(",", items) + "]", items.Count);
+            }
+
+            var (inTeam, inTeamCount) = Render("InTeam");
+            var (invited, invitedCount) = Render("Invited");
+            var (others, othersCount) = Render("Others");
+
+            return Json.Obj(
+                ("ok", true),
+                ("domain", AppDomain.CurrentDomain.FriendlyName),
+                ("inTeamCount", inTeamCount.ToString(CultureInfo.InvariantCulture)),
+                ("invitedCount", invitedCount.ToString(CultureInfo.InvariantCulture)),
+                ("othersCount", othersCount.ToString(CultureInfo.InvariantCulture)),
+                ("inTeam", new Json.Raw(inTeam)),
+                ("invited", new Json.Raw(invited)),
+                ("others", new Json.Raw(others)));
+        }
+        catch (Exception ex)
+        {
+            return Json.Obj(
+                ("ok", false),
+                ("reason", ex.GetType().Name + ": " + ex.Message),
+                ("chain", Json.StringArray(Chain(ex))));
+        }
+    }
+
+    /// <summary>
+    /// 通用反射桥的入口。见 <see cref="ReflectiveBridge"/> 的说明。
+    /// </summary>
+    public string InvokeBridge(string script)
+    {
+        try
+        {
+            var result = ReflectiveBridge.Run(script);
+
+            var slots = new StringBuilder();
+            slots.Append('[');
+
+            for (var i = 0; i < result.Slots.Count; i++)
+            {
+                if (i > 0) slots.Append(',');
+
+                var v = result.Slots[i];
+                slots.Append(v is null
+                    ? "null"
+                    : Json.Obj(
+                        ("slot", i.ToString(CultureInfo.InvariantCulture)),
+                        ("type", v.GetType().Name),
+                        ("value", v.ToString())));
+            }
+
+            slots.Append(']');
+
+            return Json.Obj(
+                ("ok", result.Error is null),
+                ("domain", AppDomain.CurrentDomain.FriendlyName),
+                ("error", result.Error),
+                ("stepCount", result.Slots.Count.ToString(CultureInfo.InvariantCulture)),
+                ("steps", Json.StringArray(result.Lines)),
+                ("slots", new Json.Raw(slots.ToString())));
+        }
+        catch (Exception ex)
+        {
+            return Json.Obj(
+                ("ok", false),
+                ("reason", ex.GetType().Name + ": " + ex.Message),
+                ("chain", Json.StringArray(Chain(ex))));
+        }
+    }
+
     private static string BoolText(object? v) => (v as bool? ?? false) ? "true" : "false";
 
     /// <summary>
@@ -2022,7 +2340,11 @@ public sealed class UiHook : MarshalByRefObject, IUiHook
     }
 
     /// <summary>在默认域已加载的程序集里找类型。</summary>
-    private static Type? FindClientType(string fullName)
+    /// <summary>
+    /// 按全名找客户端类型。找不到返回 null（不抛）。
+    /// </summary>
+    /// <remarks>internal 而非 private：反射桥也要用它做类型解析。</remarks>
+    internal static Type? FindClientType(string fullName)
     {
         foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
         {

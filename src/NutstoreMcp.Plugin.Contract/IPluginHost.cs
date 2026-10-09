@@ -181,4 +181,26 @@ public interface IUiHook
     /// 钩子只负责构造 NutstorePath 并发请求 —— 不在钩子里重复读数据库。
     /// </remarks>
     string ListFileVersions(long sandboxId, long magic, string localRoot, string localFilePath);
+
+    /// <summary>
+    /// 读某个本地文件在云端的分享/发布状态。只读。
+    /// </summary>
+    /// <remarks>分享密码不导出，只报是否设了密码。</remarks>
+    string ReadShareInfo(long sandboxId, long magic, string localRoot, string localFilePath);
+
+    /// <summary>读协作联系人列表。只读。</summary>
+    string ReadContacts();
+
+    /// <summary>
+    /// 通用反射桥：按脚本调用客户端的实现。
+    /// </summary>
+    /// <remarks>
+    /// 加这个是为了**不再为每一个新能力重启客户端** —— 钩子在默认域，
+    /// 卸不掉，改一次就要重启一次，打断用户。
+    /// 有了它，新能力只改插件侧；钩子这一层从此稳定。
+    ///
+    /// 安全边界在桥内部：只允许客户端自己的程序集、危险方法名一律拒绝。
+    /// 写操作的策略（解锁、dryRun、白名单）仍在插件侧。
+    /// </remarks>
+    string InvokeBridge(string script);
 }

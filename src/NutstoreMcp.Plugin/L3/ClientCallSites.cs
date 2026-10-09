@@ -109,6 +109,29 @@ internal static class ClientCallSites
             Why: "纯读。只按 NutstorePath 查询该文件的版本列表，不恢复、不修改任何版本。"),
 
         new(
+            CloudOpsType,
+            "c9a9142ba46c6a4cdb6c70a448962ca9e",
+            "读文件分享状态（ReadShareInfo）",
+            Mutates: false,
+            Why: "纯读。只按 NutstorePath 查询该对象的分享信息，不创建、不修改任何分享。"),
+
+        new(
+            CloudOpsType,
+            "c915cc8f3fd71da2191b3d1dff9bbda1f",
+            "读协作联系人（ReadContacts）",
+            Mutates: false,
+            Why: "纯读。不带参数，只取联系人列表，不邀请、不写任何东西。"),
+
+        new(
+            "（通用）",
+            "InvokeBridge",
+            "通用反射桥 —— 让插件侧在不改钩子的前提下调用客户端实现",
+            Mutates: true,
+            Why: "它本身不确定改不改状态，取决于调用方给的脚本 —— 所以标为会改状态。"
+               + "桥内部有两道限制：只允许客户端自己的程序集（不能当通用 .NET 执行器）、"
+               + "危险方法名一律拒绝。写操作的策略（解锁、dryRun、白名单）仍在插件侧。"),
+
+        new(
             "NutstoreClient.Common.NutstorePath",
             "FromAbsolutePath",
             "由本地绝对路径构造 NutstorePath（ListFileVersions 的前置）",

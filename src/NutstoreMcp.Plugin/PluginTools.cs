@@ -716,86 +716,13 @@ public sealed class PluginTools
             //
             // 注意：JsonElement 只在 JsonDocument 存活期间有效。原来把 doc 放在
             // using 里、出了 try 再用 sandboxes，读的就是已释放的内存 ——
-            // 所以这里必须在 try 内就把需要的字段提出来。
-            var roots = new List<(string Root, long Id, long Magic)>();
-
-            try
+            var resolved = TryResolveSandbox(ui, localFilePath);
+            if (resolved.Error is not null)
             {
-                using var doc = JsonDocument.Parse(ui.ReadClientSyncFolders());
-
-                if (!doc.RootElement.TryGetProperty("sandboxes", out var sandboxes))
-                {
-                    return JsonSerializer.Serialize(new
-                    {
-                        ok = false,
-                        reason = "读同步文件夹列表失败，无法确定这个文件属于哪个沙箱。",
-                        raw = doc.RootElement.GetRawText(),
-                    }, Indented);
-                }
-
-                foreach (var s in sandboxes.EnumerateArray())
-                {
-                    var local = s.TryGetProperty("localPath", out var lp) ? lp.GetString() : null;
-                    if (string.IsNullOrWhiteSpace(local))
-                    {
-                        continue;
-                    }
-
-                    var id = s.TryGetProperty("id", out var idEl)
-                        && long.TryParse(idEl.GetString(), out var parsedId) ? parsedId : 0;
-
-                    var magic = s.TryGetProperty("magic", out var mEl)
-                        && long.TryParse(mEl.GetString(), out var parsedMagic) ? parsedMagic : 0;
-
-                    if (id > 0 && magic > 0)
-                    {
-                        roots.Add((local!.TrimEnd('\\', '/'), id, magic));
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                return JsonSerializer.Serialize(new
-                {
-                    ok = false,
-                    reason = $"解析同步文件夹列表失败: {ex.Message}",
-                }, Indented);
+                return resolved.Error;
             }
 
-            // 取匹配最长的那个（同步根可以嵌套，最短的会选错）
-            string? bestPath = null;
-            long bestId = 0;
-            long bestMagic = 0;
-
-            foreach (var (root, id, magic) in roots)
-            {
-                if (!localFilePath.StartsWith(root + "\\", StringComparison.OrdinalIgnoreCase)
-                    && !localFilePath.StartsWith(root + "/", StringComparison.OrdinalIgnoreCase)
-                    && !string.Equals(localFilePath, root, StringComparison.OrdinalIgnoreCase))
-                {
-                    continue;
-                }
-
-                if (bestPath is null || root.Length > bestPath.Length)
-                {
-                    bestPath = root;
-                    bestId = id;
-                    bestMagic = magic;
-                }
-            }
-
-            if (bestPath is null)
-            {
-                return JsonSerializer.Serialize(new
-                {
-                    ok = false,
-                    reason = "这个路径不在任何已绑定的同步文件夹里。"
-                           + "版本历史需要文件属于某个本地已绑定的同步文件夹。",
-                    checkedSandboxes = roots.Count,
-                }, Indented);
-            }
-
-            return ui.ListFileVersions(bestId, bestMagic, bestPath, localFilePath);
+            return ui.ListFileVersions(resolved.Id, resolved.Magic, resolved.Root!, localFilePath);
         }
         catch (Exception ex)
         {
@@ -808,6 +735,178 @@ public sealed class PluginTools
         }
     }
 
+    /// <summary>
+    /// 把本地文件路径解析到所属的同步文件夹。
+    /// </summary>
+    /// <remarks>
+    /// A4（版本历史）和 A7（分享状态）都要这一步，抽出来避免两份拷贝漂移。
+    /// 匹配时取**最长**的根 —— 同步根可以嵌套，取最短的会选错沙箱。
+    ///
+    /// 注意：JsonElement 只在 JsonDocument 存活期间有效，所以必须在 using 内
+    /// 就把需要的字段提取成普通值。
+    /// </remarks>
+    private static (string? Root, long Id, long Magic, string? Error) TryResolveSandbox(
+        Contract.IUiHook ui, string localFilePath)
+    {
+        var roots = new List<(string Root, long Id, long Magic)>();
+
+        try
+        {
+            using var doc = JsonDocument.Parse(ui.ReadClientSyncFolders());
+
+            if (!doc.RootElement.TryGetProperty("sandboxes", out var sandboxes))
+            {
+                return (null, 0, 0, JsonSerializer.Serialize(new
+                {
+                    ok = false,
+                    reason = "读同步文件夹列表失败，无法确定这个文件属于哪个沙箱。",
+                }, Indented));
+            }
+
+            foreach (var s in sandboxes.EnumerateArray())
+            {
+                var local = s.TryGetProperty("localPath", out var lp) ? lp.GetString() : null;
+                if (string.IsNullOrWhiteSpace(local))
+                {
+                    continue;
+                }
+
+                var id = s.TryGetProperty("id", out var idEl)
+                    && long.TryParse(idEl.GetString(), out var parsedId) ? parsedId : 0;
+
+                var magic = s.TryGetProperty("magic", out var mEl)
+                    && long.TryParse(mEl.GetString(), out var parsedMagic) ? parsedMagic : 0;
+
+                if (id > 0 && magic > 0)
+                {
+                    roots.Add((local!.TrimEnd('\\', '/'), id, magic));
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            return (null, 0, 0, JsonSerializer.Serialize(new
+            {
+                ok = false,
+                reason = $"解析同步文件夹列表失败: {ex.Message}",
+            }, Indented));
+        }
+
+        (string Root, long Id, long Magic)? best = null;
+
+        foreach (var (root, id, magic) in roots)
+        {
+            if (!localFilePath.StartsWith(root + "\\", StringComparison.OrdinalIgnoreCase)
+                && !localFilePath.StartsWith(root + "/", StringComparison.OrdinalIgnoreCase)
+                && !string.Equals(localFilePath, root, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            if (best is null || root.Length > best.Value.Root.Length)
+            {
+                best = (root, id, magic);
+            }
+        }
+
+        if (best is null)
+        {
+            return (null, 0, 0, JsonSerializer.Serialize(new
+            {
+                ok = false,
+                reason = "这个路径不在任何已绑定的同步文件夹里。"
+                       + "该操作需要文件属于某个本地已绑定的同步文件夹。",
+                checkedSandboxes = roots.Count,
+            }, Indented));
+        }
+
+        return (best.Value.Root, best.Value.Id, best.Value.Magic, null);
+    }
+
+    [McpServerTool(Name = "nutstore_l3_share_info", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = true)]
+    [Description("读某个本地文件在云端的分享状态（分享链接、是否设了密码、过期时间、是否禁止下载等）。只读，不需要解锁令牌。传本地文件路径即可。**分享密码不导出**，只报是否设了密码。")]
+    public static string L3ShareInfo([Description("本地文件的绝对路径")] string localFilePath)
+    {
+        var ui = PluginEntry.Ui;
+        if (ui is null)
+        {
+            return UiUnavailable;
+        }
+
+        try
+        {
+            if (string.IsNullOrWhiteSpace(localFilePath) || !Path.IsPathRooted(localFilePath))
+            {
+                return JsonSerializer.Serialize(new { ok = false, reason = "需要绝对的本地文件路径。" }, Indented);
+            }
+
+            var resolved = TryResolveSandbox(ui, localFilePath);
+            if (resolved.Error is not null)
+            {
+                return resolved.Error;
+            }
+
+            return ui.ReadShareInfo(resolved.Id, resolved.Magic, resolved.Root!, localFilePath);
+        }
+        catch (Exception ex)
+        {
+            return JsonSerializer.Serialize(new
+            {
+                ok = false,
+                reason = $"{ex.GetType().Name}: {ex.Message}",
+                note = "钩子没有 ReadShareInfo —— 需要重启客户端让新钩子生效。",
+            }, Indented);
+        }
+    }
+
+    [McpServerTool(Name = "nutstore_l3_contacts", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = true)]
+    [Description("读坚果云的协作联系人列表（团队成员、已邀请、其他）。只读，不需要解锁令牌。")]
+    public static string L3Contacts()
+    {
+        var ui = PluginEntry.Ui;
+        if (ui is null)
+        {
+            return UiUnavailable;
+        }
+
+        try
+        {
+            return ui.ReadContacts();
+        }
+        catch (Exception ex)
+        {
+            return JsonSerializer.Serialize(new
+            {
+                ok = false,
+                reason = $"{ex.GetType().Name}: {ex.Message}",
+                note = "钩子没有 ReadContacts —— 需要重启客户端让新钩子生效。",
+            }, Indented);
+        }
+    }
+    [McpServerTool(Name = "nutstore_bridge", ReadOnly = false, Destructive = false, Idempotent = false, OpenWorld = true)]
+    [Description("通用反射桥：按脚本调用客户端的实现。**加这个是为了不再为每一个新能力重启客户端**。脚本一行一个操作，行号即槽位号（从 0 开始），后续行可用 #N 引用前面的结果。支持 NEW（构造）/ CALL（静态调用）/ INSTANCE（实例调用）/ GET（取成员）/ CHAIN（沿成员链取）/ ENUM。参数编码：s:<base64> 字符串、l:<数字> long、i:<数字> int、b:true/false 布尔、#<槽位> 引用、- null、无前缀按字符串。桥内部限制：只能操作客户端自己的程序集、危险方法名一律拒绝。")]
+    public static string Bridge([Description("脚本，例如：CALL|A.c3795a08....|c915cc8f3fd71da2191b3d1dff9bbda1f")] string script)
+    {
+        var ui = PluginEntry.Ui;
+        if (ui is null)
+        {
+            return UiUnavailable;
+        }
+
+        try
+        {
+            return ui.InvokeBridge(script);
+        }
+        catch (Exception ex)
+        {
+            return JsonSerializer.Serialize(new
+            {
+                ok = false,
+                reason = $"{ex.GetType().Name}: {ex.Message}",
+                note = "钩子没有 InvokeBridge —— 需要用一次重启装上桥。装好之后加新能力就不用再重启了。",
+            }, Indented);
+        }
+    }
     [McpServerTool(Name = "nutstore_client_search_types", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
     [Description("按名字子串搜索坚果云客户端的所有类型（跨全部程序集）。用于在不知道类型全名时定位 API。只读，不执行任何客户端代码。")]
     public static string ClientSearchTypes(
