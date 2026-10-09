@@ -71,6 +71,17 @@ namespace NutstoreMcp.UiHook
             public List<string> Lines { get; } = new List<string>();
             public List<object?> Slots { get; } = new List<object?>();
             public string? Error { get; set; }
+
+        /// <summary>
+        /// 被方法改写的 ref / out 参数。键是 "行号.参数序号"。
+        /// </summary>
+        /// <remarks>
+        /// MethodInfo.Invoke 会把 ref/out 的写回放进传入的 object[] ——
+        /// 不把这一步暴露出来，调用方就看不到方法**输出**了什么，
+        /// 只能看到返回值。而有些客户端方法的输出恰恰在 ref 参数上
+        /// （例如下载方法用 ref bool 告诉你拿到的是不是全量）。
+        /// </remarks>
+        public Dictionary<string, string> RefUpdates { get; } = new Dictionary<string, string>();
         }
 
         public static Result Run(string script)
@@ -97,7 +108,7 @@ namespace NutstoreMcp.UiHook
 
                 try
                 {
-                    result.Slots.Add(ExecuteLine(line, result.Slots, i));
+                    result.Slots.Add(ExecuteLine(line, result.Slots, i, result.RefUpdates, i));
                     result.Lines.Add("ok");
                 }
                 catch (Exception ex)
@@ -115,7 +126,9 @@ namespace NutstoreMcp.UiHook
             return result;
         }
 
-        private static object? ExecuteLine(string line, List<object?> slots, int lineIndex)
+        private static object? ExecuteLine(
+            string line, List<object?> slots, int lineIndex,
+            Dictionary<string, string> refUpdates, int scriptLine)
         {
             var parts = line.Split('|');
             var op = parts[0].Trim().ToUpperInvariant();
@@ -137,7 +150,7 @@ namespace NutstoreMcp.UiHook
                     var methodName = parts[2].Trim();
                     GuardMethod(methodName);
                     var args = DecodeArgs(parts, 3, slots);
-                    return InvokeStatic(type, methodName, args);
+                    return InvokeStatic(type, methodName, args, refUpdates, scriptLine);
                 }
 
                 case "INSTANCE":
@@ -150,7 +163,7 @@ namespace NutstoreMcp.UiHook
                     var methodName = parts[2].Trim();
                     GuardMethod(methodName);
                     var args = DecodeArgs(parts, 3, slots);
-                    return InvokeInstance(target, methodName, args);
+                    return InvokeInstance(target, methodName, args, refUpdates, scriptLine);
                 }
 
                 case "GET":
@@ -322,16 +335,44 @@ namespace NutstoreMcp.UiHook
             return instance ?? throw new ArgumentException($"{type.Name} 构造返回 null");
         }
 
-        private static object? InvokeStatic(Type type, string methodName, List<object?> args)
+        private static object? InvokeStatic(
+            Type type, string methodName, List<object?> args,
+            Dictionary<string, string> refUpdates, int scriptLine)
         {
             var method = FindMethod(type, methodName, args, requireStatic: true);
-            return method.Invoke(null, args.ToArray());
+            return InvokeAndCollect(method, null, args, refUpdates, scriptLine);
         }
 
-        private static object? InvokeInstance(object target, string methodName, List<object?> args)
+        private static object? InvokeInstance(
+            object target, string methodName, List<object?> args,
+            Dictionary<string, string> refUpdates, int scriptLine)
         {
             var method = FindMethod(target.GetType(), methodName, args, requireStatic: false);
-            return method.Invoke(target, args.ToArray());
+            return InvokeAndCollect(method, target, args, refUpdates, scriptLine);
+        }
+
+        /// <summary>调用，并把 ref/out 的写回收集起来。</summary>
+        private static object? InvokeAndCollect(
+            MethodInfo method, object? target, List<object?> args,
+            Dictionary<string, string> refUpdates, int scriptLine)
+        {
+            var boxed = args.ToArray();
+            var result = method.Invoke(target, boxed);
+
+            var ps = method.GetParameters();
+            for (var i = 0; i < ps.Length && i < boxed.Length; i++)
+            {
+                // 只看真正会写回的参数类型，避免把普通参数也算成变更
+                if (!ps[i].ParameterType.IsByRef && !ps[i].IsOut)
+                {
+                    continue;
+                }
+
+                refUpdates[$"{scriptLine}.{i}"] =
+                    $"{ps[i].Name ?? ("arg" + i)} => {boxed[i] ?? "null"}";
+            }
+
+            return result;
         }
 
         /// <summary>

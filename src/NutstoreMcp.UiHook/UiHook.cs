@@ -2278,7 +2278,10 @@ public sealed class UiHook : MarshalByRefObject, IUiHook
                 ("error", result.Error),
                 ("stepCount", result.Slots.Count.ToString(CultureInfo.InvariantCulture)),
                 ("steps", Json.StringArray(result.Lines)),
-                ("slots", new Json.Raw(slots.ToString())));
+                ("slots", new Json.Raw(slots.ToString())),
+                ("refUpdates", new Json.Raw(
+                    "{" + string.Join(",", result.RefUpdates.Select(
+                        kv => Json.Quote(kv.Key) + ":" + Json.Quote(kv.Value))) + "}")));
         }
         catch (Exception ex)
         {
