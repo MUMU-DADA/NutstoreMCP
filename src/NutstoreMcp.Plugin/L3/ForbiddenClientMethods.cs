@@ -35,6 +35,13 @@ public static class ForbiddenClientMethods
         [ClientSymbols.DeleteObject] =
             "删除云端文件或目录。两个重载最终都提交删除元数据，可能传播到本地同步文件。",
 
+        [ClientSymbols.ReadEventsWithLocalWrites] =
+            "事件入口虽只读取云端，但随后写 EventDb、改变未读数并发布最近页更新；"
+            + "不能经通用桥调用，避免把远端读取变成本地客户端状态变更。",
+
+        [ClientSymbols.SessionHeaderHelper] =
+            "客户端私有会话头生成器，结果包含会话凭据；禁止经桥读取或导出。",
+
         ["DeleteObject"] = "删除对象；禁止通过语义名称绕过混淆入口禁令。",
         ["RemoveObject"] = "移除对象；禁止通过语义名称绕过混淆入口禁令。",
 
@@ -110,7 +117,7 @@ public static class ForbiddenClientMethods
     public static string Describe() => JsonSerializer.Serialize(new
     {
         count = Denylist.Count,
-        note = "这些方法永不暴露给 MCP：涉及删除、解绑、迁移同步根，或绕过桥的对象与成员边界。",
+        note = "这些方法永不暴露给 MCP：涉及删除、解绑、迁移同步根、会写客户端状态的事件入口，或绕过桥的对象与成员边界。",
         entries = Denylist
             .OrderBy(kv => kv.Key, StringComparer.OrdinalIgnoreCase)
             .Select(kv => new { method = kv.Key, reason = kv.Value }),

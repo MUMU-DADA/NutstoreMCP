@@ -34,6 +34,8 @@ public class ForbiddenClientMethodsTests
         ClientSymbols.DeleteSandbox,
         "MakeDeleteSandboxRequest",
         ClientSymbols.DeleteObject,
+        ClientSymbols.ReadEventsWithLocalWrites,
+        ClientSymbols.SessionHeaderHelper,
         "GetFieldValue",
         "SetFieldValue",
         "GetPropertyValue",
@@ -80,7 +82,6 @@ public class ForbiddenClientMethodsTests
         "DiscardDuplicateAndEnqueue",
         "HasPendingBindCommand",
         ClientSymbols.ReadPathAcl, // 读子路径权限
-        ClientSymbols.ReadEventsWithLocalWrites, // 读增量事件
         "MakeGetSyncFolderDetailRequest",
     ];
 

@@ -4,7 +4,7 @@ namespace NutstoreMcp.ClientBindings;
 internal static class ClientSymbols
 {
     public const string VerifiedClientVersion = "7.2.12.0";
-    public const string BaselineFileName = "baseline-7.2.12-upload.json";
+    public const string BaselineFileName = "baseline-7.2.12-guard.json";
     public const string CloudOpsAssembly = "NutstoreClient.Legacy.dll";
     public const string CloudOpsType = "A.c3795a089d76f103f11c4fe70f38ac8ca";
     public const string CommonAssembly = "Nutstore.Common.dll";
@@ -52,6 +52,8 @@ internal static class ClientSymbols
 
     // 调查过的入口也参与升级检查；登记不代表允许执行。
     public const string ReadEventsWithLocalWrites = "c524be38afabc83eacc7d38aceea8700c";
+    // 私有会话头生成器；通用桥可反射非公开方法，必须永久禁止导出其结果。
+    public const string SessionHeaderHelper = "cb6c520f3f0ae69491918bf55e3c6e05f";
     public const string DeleteSandbox = "cc62a4576fdf6f6721f7496c5b2d04e30";
     public const string DeleteObject = "cd9ad552f9198292967c88e3266e162cc";
 
@@ -62,6 +64,10 @@ internal static class ClientSymbols
         "DisconnectSyncRoot", "DisableSyncRootOnDemandPopulation", "RemoveAUMIDToSyncRoots",
         "DeleteObject", "RemoveObject", DeleteSandbox, "MakeDeleteSandboxRequest", DeleteObject,
         "GetFieldValue", "SetFieldValue", "GetPropertyValue", "SetPropertyValue",
+        // 远端事件拉取随后写 EventDb、未读数和最近页；不能经通用桥调用。
+        ReadEventsWithLocalWrites,
+        // 返回 xSessionHeader；经桥读取会泄露会话凭据。
+        SessionHeaderHelper,
     };
 
     public static ClientSymbol[] Definitions => new[]
@@ -104,6 +110,8 @@ internal static class ClientSymbols
         Support("ReflectionWriteProperty", CloudOpsAssembly, "NutstoreClient.Helpers.ReflectionHelper", "SetPropertyValue", effect: "forbidden"),
         Entry(nameof(ReadEventsWithLocalWrites), ReadEventsWithLocalWrites,
             "读取事件且写 EventDb、未读数和最近页；未开放", "local-write"),
+        Entry(nameof(SessionHeaderHelper), SessionHeaderHelper,
+            "生成客户端会话请求头；仅专用默认域内部使用，禁止桥导出", "forbidden"),
         Entry(nameof(DeleteSandbox), DeleteSandbox, "删除整个云端沙箱；禁止调用", "forbidden"),
         Entry(nameof(DeleteObject), DeleteObject, "删除云端对象；禁止调用", "forbidden"),
         new ClientSymbol(nameof(CloudPathMaxUtf8Bytes), CloudOpsAssembly, NutstorePathType,
