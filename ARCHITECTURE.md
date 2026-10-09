@@ -428,7 +428,14 @@ L3 不该去改这些开关。
 设计立场：**拒绝「我帮你判断安不安全」**。判断本地文件与云端是否冲突需要比对两边
 全量元数据，判断错了代价是用户的文件 —— 所以非空目录一律拒绝。
 
-三道闸：`NUTSTORE_L3_WRITE=1`（默认不存在）+ `confirm=true` + `dryRun` 默认 `true`。
+三道闸：**解锁令牌** + `confirm=true` + `dryRun` 默认 `true`。
+
+解锁用令牌文件而不是环境变量：`%LOCALAPPDATA%\NutstoreMcp\l3-write.enabled`，
+内容必须是 `yes`（不是「文件存在」—— 随手 `New-Item` 出来的空文件不该解锁写入）。
+
+为什么不用环境变量：环境变量属于客户端进程，改了要重启客户端才生效，
+而重启客户端正是我们最想避免的操作。令牌文件随时可建可删，**撤销是立刻的**。
+环境变量仍然支持，给需要在进程级长期启用的人。
 
 所以设计上要求**全部**满足才放行：
 
@@ -486,39 +493,66 @@ L3 唯一可能丢数据的地方是「把本地目录绑到云端沙箱」，�
 设计立场：**拒绝「我帮你判断安不安全」**。判断本地文件与云端是否冲突需要比对两边
 全量元数据，判断错了代价是用户的文件 —— 所以非空目录一律拒绝。
 
-三道闸：`NUTSTORE_L3_WRITE=1`（默认不存在）+ `confirm=true` + `dryRun` 默认 `true`。
+三道闸：**解锁令牌** + `confirm=true` + `dryRun` 默认 `true`。
 
-### 已在插件里落地且安全的部分
+解锁用令牌文件而不是环境变量：`%LOCALAPPDATA%\NutstoreMcp\l3-write.enabled`，
+内容必须是 `yes`（不是「文件存在」—— 随手 `New-Item` 出来的空文件不该解锁写入）。
+
+为什么不用环境变量：环境变量属于客户端进程，改了要重启客户端才生效，
+而重启客户端正是我们最想避免的操作。令牌文件随时可建可删，**撤销是立刻的**。
+环境变量仍然支持，给需要在进程级长期启用的人。
+
+### 已落地的构件
 
 | 构件 | 说明 |
 |---|---|
-| `L3/ClientAssemblies.cs` | 在插件子域加载客户端程序集 + `Reflect` 探查签名。**只反射，不执行** —— 不会触发那些静态构造 |
-| `L3/SandboxApi.cs` | 走 DAO 读同步配置。**先复制数据库（含 `-wal`/`-shm`）再读副本**，真库全程不被本进程打开。当前受上述限制调用失败，但复制逻辑和副本清理是正确且必要的 |
-| `nutstore_client_reflect` | 上面那套的 MCP 工具，用来在不确定 API 形状时先看清楚 |
+| `IUiHook.ReadClientSyncFolders()` | 在默认域用客户端 DAO 读同步文件夹。**已实测可用**（12 个沙箱） |
+| `IUiHook.BindSandbox(...)` | 在默认域执行绑定。**已部署**（接口清单里可见），尚未端到端跑过 |
+| `IUiHook.AddToggle(...)` | 往设置页注入原生开关，**已实测可用** |
+| `L3/ClientAssemblies.cs` | 子域加载客户端程序集 + `Reflect` 探查签名。只反射不执行 |
+| `L3/WriteGuards.cs` | 写入放行判断（纯逻辑，11 项离线验证） |
+| `L3/ForbiddenClientMethods.cs` | 9 条禁止调用清单（代码级闸门） |
+| `nutstore_client_reflect` / `_search_types` | 不确定 API 形状时先看清楚 |
 
-### 下一步（需要用户在场：退出客户端 → `install.ps1` → 重启）
+### 绑定的完整链路（已实现）
 
-**已写好、等重启后生效的部分**：`IUiHook.ReadClientSyncFolders()` 已在默认域实现
-（同样是复制数据库读副本），插件侧 `nutstore_l3_sync_folders` 会优先走它。
-
-当前调用会优雅返回（实测）：
-
-```json
-{
-  "ok": false,
-  "viaDefaultDomain": "RemotingException: 未在接口找到方法 ReadClientSyncFolders",
-  "note": "钩子没有 ReadClientSyncFolders —— 需要重启客户端让新钩子生效。"
-}
+```
+L2  nutstore_l3_bind_candidates
+    读 all_sandbox_list，筛出「云端有、本地未绑定」的，给出 id / magic / pathPerms
+      ↓  （调用方把这三个值传给插件工具）
+插件 nutstore_l3_create_sync_folder
+    WriteGuards 判定 → 解锁令牌 + confirm + dryRun + 空目录 + 不重叠 + NotSynced
+      ↓
+钩子 IUiHook.BindSandbox(sandboxId, magic, localPath, permPaths[], permCaps[])
+    构造 NSSandbox + List<CapsOnPathBean> → NSSandboxDAO.InitSandbox
 ```
 
-注意契约 DLL 在程序目录和插件目录各有一份，**两处必须一起更新**，
-`build.ps1` 会比对 SHA256 并提示。
+**参数刻意用平行数组而不是 JSON**：钩子住客户端默认域、必须零依赖，
+所以它不解析任何东西。跨域传 `string[]` / `long[]` 是原生支持的。
+早期版本我为此手写了 JSON 解析器（还带两个 bug），后来发现插件本来就有
+`System.Text.Json`（经 MCP SDK 传递引用）—— 那个轮子是白造的，已删除。
 
-重启后依次确认：
+**钩子返回里刻意不断言成功**：`InitSandbox` 只是返回了，客户端是否真正接管该目录
+由它自己决定。不假装成功。
 
-1. `nutstore_l3_sync_folders` 是否返回客户端 DAO 的结果（`source` 字段会写明「默认域」）
-2. 写入路径**仍不开**：需要先把 `InitSandbox` 的调用在默认域实现，
-   并经过 `L3/WriteGuards.cs` 的三道闸；这一步应当单独评审，不要顺手打开
+### 还缺什么
+
+**一个可绑定的目标。** 实测当前 现有云端文件夹全部已绑定，
+`nutstore_l3_bind_candidates` 返回 0 个。
+
+要端到端验证，需要先有一个「云端有、本地没有」的文件夹。
+最安全的做法是建一个**全新的空文件夹**配一个**空的本地目录** ——
+两端都没有数据，构造上就没有可丢的东西。
+
+### 契约两处部署的检查
+
+契约 DLL 在程序目录和插件目录各一份。`build.ps1` 会比对**接口方法清单**
+（反射读 `IPluginHost` / `IUiHook` 的方法名集合）。
+
+**不要退回文件哈希比对**：.NET 编译不是逐字节可复现的（PE 头带 MVID 和时间戳），
+同样源码两次构建哈希就不同 —— 那会产生持续的假警报。
+实测两处功能完全相同、都是 6144 字节，哈希却不同。
+**误报比不检查更糟，它会把人训练成无视警告。**
 
 ---
 
