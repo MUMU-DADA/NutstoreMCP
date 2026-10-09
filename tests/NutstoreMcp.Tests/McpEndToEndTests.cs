@@ -65,12 +65,13 @@ public class McpEndToEndTests
         await using var client = await ConnectAsync();
 
         var tools = await client.ListToolsAsync(cancellationToken: TestContext.Current.CancellationToken);
-        Assert.Equal(14, tools.Count);
+        Assert.Equal(15, tools.Count);
 
         var names = tools.Select(t => t.Name).ToList();
         Assert.Contains("nutstore_list", names);
         Assert.Contains("nutstore_sync_folders", names);
         Assert.Contains("nutstore_delete", names);
+        Assert.Contains("nutstore_l3_bind_candidates", names);
 
         // 读本地库的工具在无凭据时也应可用
         var result = await client.CallToolAsync(
