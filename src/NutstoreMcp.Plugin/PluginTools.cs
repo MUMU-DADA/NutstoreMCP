@@ -261,6 +261,91 @@ public sealed class PluginTools
         }
     }
 
+    [McpServerTool(Name = "nutstore_l3_create_cloud_folder", ReadOnly = false, Destructive = false, Idempotent = false, OpenWorld = true)]
+    [Description("【默认只预演】在云端新建一个同步文件夹，走客户端自己的实现（不需要任何第三方凭据）。放行条件与绑定相同：解锁令牌 + confirm=true + dryRun=false。返回新沙箱的 sandboxId / magic / pathPerms，可直接喂给 nutstore_l3_bind 绑到本地。")]
+    public static string L3CreateCloudFolder(
+        [Description("云端文件夹名（不能含路径分隔符等非法字符）")] string name,
+        [Description("描述，可留空")] string? description = null,
+        [Description("必须显式传 true 才可能执行")] bool confirm = false,
+        [Description("默认 true（只预演不执行）")] bool dryRun = true)
+    {
+        try
+        {
+            var refusals = new List<string>();
+            var unlock = PluginEntry.IsWriteUnlocked();
+
+            if (!unlock)
+            {
+                refusals.Add(
+                    "L3 写入未解锁。解锁方式：把内容为 yes 的令牌文件放到"
+                    + " %LOCALAPPDATA%\\NutstoreMcp\\l3-write.enabled。撤销只需删掉它。");
+            }
+
+            if (!confirm)
+            {
+                refusals.Add("调用方没有传 confirm=true。");
+            }
+
+            if (string.IsNullOrWhiteSpace(name))
+            {
+                refusals.Add("文件夹名为空。");
+            }
+            else if (name.IndexOfAny(['/', '\\', ':', '*', '?', '"', '<', '>', '|']) >= 0)
+            {
+                refusals.Add($"文件夹名含非法字符: {name}");
+            }
+
+            // 建云端文件夹是**远程写**，即使云端没有同名项也不会覆盖任何东西，
+            // 但它会真实落到用户的云盘里 —— 所以和绑定用同一把锁。
+            string? result = null;
+            var executed = false;
+
+            if (refusals.Count == 0 && !dryRun)
+            {
+                var ui = PluginEntry.Ui;
+                if (ui is null)
+                {
+                    refusals.Add("UI 钩子不可用 —— 无法调用客户端实现。");
+                }
+                else
+                {
+                    try
+                    {
+                        result = ui.CreateCloudSyncFolder(name, description ?? string.Empty);
+                        executed = true;
+                    }
+                    catch (Exception ex)
+                    {
+                        refusals.Add(
+                            $"调用客户端实现失败（钩子可能是旧版本，需要重启客户端）: "
+                            + $"{ex.GetType().Name}: {ex.Message}");
+                    }
+                }
+            }
+
+            return JsonSerializer.Serialize(new
+            {
+                allowed = refusals.Count == 0,
+                wouldWrite = refusals.Count == 0 && !dryRun && executed,
+                dryRun,
+                unlockVariablePresent = unlock,
+                probe = new { name, description = description ?? string.Empty },
+                refusals,
+                notes = new[]
+                {
+                    "本操作只在云端**新建**一个文件夹，不删除、不移动、不修改任何已有内容。",
+                    "建好后可用 nutstore_l3_bind 把它绑到本地空目录。",
+                },
+                executed,
+                result,
+            }, Indented);
+        }
+        catch (Exception ex)
+        {
+            return Error(ex);
+        }
+    }
+
     [McpServerTool(Name = "nutstore_client_search_types", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
     [Description("按名字子串搜索坚果云客户端的所有类型（跨全部程序集）。用于在不知道类型全名时定位 API。只读，不执行任何客户端代码。")]
     public static string ClientSearchTypes(

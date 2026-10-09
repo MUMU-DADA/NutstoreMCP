@@ -454,6 +454,39 @@ public sealed class LocalNutstoreData : IDisposable
         }
     }
 
+    /// <summary>config 表里所有的键名（不含任何值）。</summary>
+    /// <remarks>
+    /// 只列键名：用来判断会话令牌之类的凭据是否被持久化在本地，
+    /// 而不必把值打出来。
+    /// </remarks>
+    public IReadOnlyList<string> ConfigKeys()
+    {
+        if (!Available)
+        {
+            return [];
+        }
+
+        try
+        {
+            var conn = Open();
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = "SELECT key FROM config ORDER BY key";
+            using var reader = cmd.ExecuteReader();
+
+            var result = new List<string>();
+            while (reader.Read())
+            {
+                result.Add(reader.GetString(0));
+            }
+
+            return result;
+        }
+        catch (SqliteException)
+        {
+            return [];
+        }
+    }
+
     /// <summary>云端 sandbox 列表（已剔除密钥字段）。</summary>
     private List<JsonElement> SandboxList()
     {

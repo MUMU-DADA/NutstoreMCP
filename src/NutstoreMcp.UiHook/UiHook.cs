@@ -732,6 +732,155 @@ public sealed class UiHook : MarshalByRefObject, IUiHook
         }
     }
 
+    /// <summary>
+    /// 在云端新建一个同步文件夹，走客户端自己的实现。
+    /// </summary>
+    /// <remarks>
+    /// 不需要任何第三方凭据：目标方法自己拼 xSessionHeader 并发送请求，
+    /// 会话令牌是客户端运行时的活值。
+    ///
+    /// 定位方式说明：这个类和它的方法都**被混淆过**（名字是哈希），
+    /// 按语义名字搜永远搜不到 —— 这正是之前几轮找不到入口的原因。
+    /// 上面的字面量来自反编译：全程序集只有两处引用
+    /// MakeCreateSyncFolderRequest，一处在请求构造器本身，另一处就是这里。
+    /// 客户端升级后这两个哈希可能变化，所以要显式处理「找不到」的情况。
+    /// </remarks>
+    public string CreateCloudSyncFolder(string name, string description)
+    {
+        try
+        {
+            // ── 名字先挡住明显非法的 ──
+            // 这个名字会写进云端，不该靠服务端去拒绝
+            if (string.IsNullOrWhiteSpace(name))
+            {
+                return Json.Obj(("ok", false), ("reason", "文件夹名为空"));
+            }
+
+            if (name.Length > 100)
+            {
+                return Json.Obj(("ok", false), ("reason", "文件夹名过长"));
+            }
+
+            if (name.IndexOfAny(new[] { '/', '\\', ':', '*', '?', '"', '<', '>', '|' }) >= 0)
+            {
+                return Json.Obj(("ok", false), ("reason", "文件夹名含非法字符: " + name));
+            }
+
+            if (name == "." || name == "..")
+            {
+                return Json.Obj(("ok", false), ("reason", "文件夹名不能是 . 或 .."));
+            }
+
+            const string ApiType = "A.c3795a089d76f103f11c4fe70f38ac8ca";
+            const string ApiMethod = "ccdd0d7373903386c87fb2d3077bf8ced";
+
+            var api = FindClientType(ApiType);
+            if (api is null)
+            {
+                return Json.Obj(
+                    ("ok", false),
+                    ("reason", "找不到客户端的建文件夹实现 " + ApiType + " —— 客户端多半升级了，"
+                             + "需要重新反编译确认混淆名。"));
+            }
+
+            var aclType = FindClientType("Nutstore.Common.SandboxACL");
+            var getDefaultPerm = aclType?.GetMethod("GetDefaultPerm", BindingFlags.Public | BindingFlags.Static);
+            if (getDefaultPerm is null)
+            {
+                return Json.Obj(("ok", false), ("reason", "找不到 SandboxACL.GetDefaultPerm"));
+            }
+
+            var acl = getDefaultPerm.Invoke(null, null);
+            if (acl is null)
+            {
+                return Json.Obj(("ok", false), ("reason", "SandboxACL.GetDefaultPerm 返回 null"));
+            }
+
+            var create = api.GetMethod(ApiMethod, BindingFlags.Public | BindingFlags.Static);
+            if (create is null)
+            {
+                return Json.Obj(("ok", false), ("reason", "找不到 " + ApiMethod + "（混淆名可能变了）"));
+            }
+
+            // ccdd0d73...(string name, string desc, SandboxACL acl, bool doNotSync)
+            var info = create.Invoke(null, new object[] { name, description ?? string.Empty, acl, false });
+            if (info is null)
+            {
+                return Json.Obj(("ok", false), ("reason", "客户端返回了 null"));
+            }
+
+            // ── 取出绑定所需的身分 ──
+            var infoType = info.GetType();
+
+            object? Get(string prop)
+            {
+                try
+                {
+                    return infoType.GetProperty(prop)?.GetValue(info);
+                }
+                catch (Exception)
+                {
+                    return null;
+                }
+            }
+
+            var sandboxId = Get("SandboxId");
+            var magic = Get("SandboxMagic");
+
+            // PathPerms 是 List<CapsOnPathBean>{ Path, Caps }
+            var permPaths = new List<string>();
+            var permCaps = new List<long>();
+
+            if (Get("PathPerms") is System.Collections.IEnumerable perms)
+            {
+                foreach (var bean in perms)
+                {
+                    if (bean is null)
+                    {
+                        continue;
+                    }
+
+                    var beanType = bean.GetType();
+                    try
+                    {
+                        var path = beanType.GetProperty("Path")?.GetValue(bean) as string;
+                        var caps = beanType.GetProperty("Caps")?.GetValue(bean);
+
+                        if (path is not null && caps is not null)
+                        {
+                            permPaths.Add(path);
+                            permCaps.Add(Convert.ToInt64(caps, CultureInfo.InvariantCulture));
+                        }
+                    }
+                    catch (Exception)
+                    {
+                        // 单条权限取不到就跳过 —— 但下面会因为为空而明确报告
+                    }
+                }
+            }
+
+            return Json.Obj(
+                ("ok", true),
+                ("domain", AppDomain.CurrentDomain.FriendlyName),
+                ("name", Get("Name")?.ToString()),
+                ("sandboxId", sandboxId?.ToString()),
+                ("magic", magic?.ToString()),
+                ("isOwner", Get("IsOwner")?.ToString()),
+                ("permPaths", Json.StringArray(permPaths)),
+                ("permCaps", new Json.Raw("[" + string.Join(",", permCaps) + "]")),
+                ("note", "云端文件夹已创建。把 sandboxId / magic / permPaths / permCaps 喂给 "
+                       + "nutstore_l3_bind 即可绑定到本地。"));
+        }
+        catch (Exception ex)
+        {
+            // TargetInvocationException 只是外壳，真正的原因在里层
+            return Json.Obj(
+                ("ok", false),
+                ("reason", ex.GetType().Name + ": " + ex.Message),
+                ("chain", Json.StringArray(Chain(ex))));
+        }
+    }
+
     private static List<string> Chain(Exception ex)
     {
         var result = new List<string>();

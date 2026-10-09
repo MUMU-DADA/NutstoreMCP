@@ -130,4 +130,14 @@ public interface IUiHook
     /// 拆成这两个数组。
     /// </remarks>
     string BindSandbox(long sandboxId, long magic, string localPath, string[] permPaths, long[] permCaps);
+
+    /// <summary>
+    /// 在云端新建一个同步文件夹（走客户端自己的实现，不需要任何第三方凭据）。
+    /// </summary>
+    /// <remarks>
+    /// 会话令牌由客户端内部处理：目标方法自己拼 <c>xSessionHeader</c> 并发送请求。
+    /// 返回新建沙箱的身份（id / magic / 名称 / pathPerms），可直接喂给
+    /// <see cref="BindSandbox"/> 完成本地绑定。
+    /// </remarks>
+    string CreateCloudSyncFolder(string name, string description);
 }

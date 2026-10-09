@@ -17,6 +17,30 @@ if (args.Contains("--doctor"))
     return await Doctor.RunAsync();
 }
 
+// 诊断：config 表里有哪些键（只列键名，不列值）。
+if (args.Contains("--dump-config-keys"))
+{
+    var cfgKeys = AppConfig.Load();
+    using var dataKeys = new LocalNutstoreData(cfgKeys.DataDir);
+
+    if (!dataKeys.Available)
+    {
+        Console.Error.WriteLine("本地数据库不可用");
+        return 1;
+    }
+
+    var keys = dataKeys.ConfigKeys();
+    Console.WriteLine($"config 表: {keys.Count} 个键（只列键名，不列值）");
+    Console.WriteLine();
+
+    foreach (var key in keys)
+    {
+        Console.WriteLine($"  {key}");
+    }
+
+    return 0;
+}
+
 // 诊断：云端沙箱列表里有哪些字段。只报字段名不报值。
 if (args.Contains("--dump-sandbox-fields"))
 {
