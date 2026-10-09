@@ -38,6 +38,11 @@ public static class ForbiddenClientMethods
         ["DeleteObject"] = "删除对象；禁止通过语义名称绕过混淆入口禁令。",
         ["RemoveObject"] = "移除对象；禁止通过语义名称绕过混淆入口禁令。",
 
+        ["GetFieldValue"] = "反射读取任意对象的私有字段，绕过桥的接收者和声明程序集限制。",
+        ["SetFieldValue"] = "反射修改任意对象的私有字段，绕过桥的对象与成员写入边界。",
+        ["GetPropertyValue"] = "反射读取任意对象的私有属性，绕过桥的公开成员限制。",
+        ["SetPropertyValue"] = "反射修改任意对象的私有属性，绕过桥的对象与成员写入边界。",
+
         // ── OS 层（Windows 云文件 API）──
 
         ["UnregisterAllNutstoreSyncRoots"] =
@@ -105,7 +110,7 @@ public static class ForbiddenClientMethods
     public static string Describe() => JsonSerializer.Serialize(new
     {
         count = Denylist.Count,
-        note = "这些方法永不暴露给 MCP。它们后果不可逆：注销同步根、解绑沙箱、清空本地数据。",
+        note = "这些方法永不暴露给 MCP：涉及删除、解绑、迁移同步根，或绕过桥的对象与成员边界。",
         entries = Denylist
             .OrderBy(kv => kv.Key, StringComparer.OrdinalIgnoreCase)
             .Select(kv => new { method = kv.Key, reason = kv.Value }),

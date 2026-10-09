@@ -870,7 +870,7 @@ public sealed partial class PluginTools
         }
     }
     [McpServerTool(Name = "nutstore_bridge", ReadOnly = false, Destructive = false, Idempotent = false, OpenWorld = true)]
-    [Description("通用反射桥：按脚本调用客户端的实现。**加这个是为了不再为每一个新能力重启客户端**。脚本一行一个操作，行号即槽位号（从 0 开始），后续行可用 #N 引用前面的结果。支持 NEW（构造）/ CALL（静态调用）/ INSTANCE（实例调用）/ GET（取成员）/ CHAIN（沿成员链取）/ ENUM。参数编码：s:<base64> 字符串、l:<数字> long、i:<数字> int、b:true/false 布尔、#<槽位> 引用、- null、无前缀按字符串。桥内部限制：只能操作客户端自己的程序集、危险方法名一律拒绝。")]
+    [Description("通用反射桥：按脚本调用客户端实现。脚本一行一个操作，行号即槽位号（从 0 开始），后续可用 #N 引用结果。支持 NEW / CALL / INSTANCE / GET / CHAIN / ENUM；BUFFER|base64 创建总计最多8MiB的只读流，结束自动释放；VALUE|NutstoreClient.Helpers.CreateFileParam|字段|参数... 仅构建七字段白名单的新结构体，无通用SET。参数：s:<base64>字符串、l:<数字>long、i:<数字>int、b:true/false、#<槽位>、- null、无前缀字符串。只能操作客户端程序集；危险方法、反射/委托签名及参数拒绝；客户端异常不输出原始消息。")]
     public static string Bridge([Description("脚本格式：CALL|<客户端类型全名>|<方法名>|参数...")] string script)
     {
         var ui = PluginEntry.Ui;

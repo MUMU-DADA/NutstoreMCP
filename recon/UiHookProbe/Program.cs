@@ -45,6 +45,8 @@ internal static class Program
         failures += Check("L3 禁止清单：正常方法不被误伤", Forbidden_SafeMethodsNotBlocked);
         failures += Check("反射桥：删除哈希与请求构造入口在执行前被拦", Bridge_DeleteEntrypointsNeverInvoked);
         failures += Check("反射桥：实例、属性链与反射结果不能越过客户端边界", Bridge_ObjectBoundariesNeverBypassed);
+        failures += Check("反射桥：BUFFER 生命周期与 VALUE 新结构体字段守卫", Bridge_BufferAndValueAreBounded);
+        failures += Check("反射桥：反射签名与嵌套数组在实现执行前被拦", Bridge_MetadataSignaturesAndArraysAreRejected);
 
         Console.WriteLine();
         Console.WriteLine(failures == 0 ? "══ 全部通过 ══" : $"══ {failures} 项失败 ══");
@@ -666,6 +668,447 @@ internal static class Program
         il.Emit(OpCodes.Stsfld, counter);
         if (returnValue is int value) il.Emit(OpCodes.Ldc_I4, value);
         il.Emit(OpCodes.Ret);
+    }
+
+    private static (bool, string) Bridge_BufferAndValueAreBounded()
+    {
+        // 用与登记 DTO 同名的内存假结构体，当前进程绝不加载真正客户端程序集。
+        var assembly = AppDomain.CurrentDomain.DefineDynamicAssembly(
+            new AssemblyName("NutstoreClient.BufferValueProbe"), AssemblyBuilderAccess.Run);
+        var module = assembly.DefineDynamicModule("MemoryOnly");
+        var pathBuilder = module.DefineType("NutstoreClient.BufferValuePath", TypeAttributes.Public | TypeAttributes.Class);
+        pathBuilder.DefineDefaultConstructor(MethodAttributes.Public);
+        var pathType = pathBuilder.CreateType()!;
+        var dtoBuilder = module.DefineType(ClientSymbols.CreateFileParamType,
+            TypeAttributes.Public | TypeAttributes.Sealed | TypeAttributes.SequentialLayout, typeof(ValueType));
+        dtoBuilder.DefineField("path", pathType, FieldAttributes.Public);
+        dtoBuilder.DefineField("size", typeof(long), FieldAttributes.Public);
+        dtoBuilder.DefineField("hashBase64", typeof(string), FieldAttributes.Public);
+        dtoBuilder.DefineField("fullObjectNameBase64", typeof(string), FieldAttributes.Public);
+        dtoBuilder.DefineField("blockListNameBase64", typeof(string), FieldAttributes.Public);
+        dtoBuilder.DefineField("compressible", typeof(bool), FieldAttributes.Public);
+        var constructorTouched = dtoBuilder.DefineField("constructorTouched", typeof(bool), FieldAttributes.Public);
+        dtoBuilder.DefineField("ReadOnlyField", typeof(long), FieldAttributes.Public | FieldAttributes.InitOnly);
+        dtoBuilder.DefineField("StaticField", typeof(long), FieldAttributes.Public | FieldAttributes.Static);
+        dtoBuilder.DefineField("PrivateField", typeof(long), FieldAttributes.Private);
+        var property = dtoBuilder.DefineProperty("PropertyOnly", PropertyAttributes.None, typeof(long), Type.EmptyTypes);
+        var propertyGetter = dtoBuilder.DefineMethod("get_PropertyOnly", MethodAttributes.Public | MethodAttributes.SpecialName,
+            typeof(long), Type.EmptyTypes);
+        var getterIl = propertyGetter.GetILGenerator();
+        getterIl.Emit(OpCodes.Ldc_I8, 42L);
+        getterIl.Emit(OpCodes.Ret);
+        property.SetGetMethod(propertyGetter);
+        var constructor = dtoBuilder.DefineConstructor(MethodAttributes.Public, CallingConventions.Standard, Type.EmptyTypes);
+        var constructorIl = constructor.GetILGenerator();
+        constructorIl.Emit(OpCodes.Ldarg_0);
+        constructorIl.Emit(OpCodes.Initobj, dtoBuilder);
+        constructorIl.Emit(OpCodes.Ldarg_0);
+        constructorIl.Emit(OpCodes.Ldc_I4_1);
+        constructorIl.Emit(OpCodes.Stfld, constructorTouched);
+        constructorIl.Emit(OpCodes.Ret);
+        var dtoType = dtoBuilder.CreateType()!;
+
+        var clientBuilder = module.DefineType("NutstoreClient.BufferValueClient", TypeAttributes.Public | TypeAttributes.Class);
+        clientBuilder.DefineDefaultConstructor(MethodAttributes.Public);
+        var capturedBuilder = clientBuilder.DefineField("CapturedStream", typeof(Stream), FieldAttributes.Public | FieldAttributes.Static);
+        var borrowBuilder = clientBuilder.DefineField("BorrowedStream", typeof(Stream), FieldAttributes.Public | FieldAttributes.Static);
+        var capture = clientBuilder.DefineMethod("CaptureBuffer", MethodAttributes.Public | MethodAttributes.Static,
+            typeof(bool), new[] { typeof(Stream) });
+        var captureIl = capture.GetILGenerator();
+        captureIl.Emit(OpCodes.Ldarg_0);
+        captureIl.Emit(OpCodes.Stsfld, capturedBuilder);
+        captureIl.Emit(OpCodes.Ldarg_0);
+        captureIl.Emit(OpCodes.Callvirt, typeof(Stream).GetProperty("CanWrite")!.GetGetMethod()!);
+        captureIl.Emit(OpCodes.Ldc_I4_0);
+        captureIl.Emit(OpCodes.Ceq);
+        captureIl.Emit(OpCodes.Ret);
+        var captureAndThrow = clientBuilder.DefineMethod("CaptureBufferAndThrow", MethodAttributes.Public | MethodAttributes.Static,
+            typeof(void), new[] { typeof(Stream) });
+        var throwIl = captureAndThrow.GetILGenerator();
+        throwIl.Emit(OpCodes.Ldarg_0);
+        throwIl.Emit(OpCodes.Stsfld, capturedBuilder);
+        throwIl.Emit(OpCodes.Ldstr, "bridge-sensitive-message-marker");
+        throwIl.Emit(OpCodes.Newobj, typeof(InvalidOperationException).GetConstructor(new[] { typeof(string) })!);
+        throwIl.Emit(OpCodes.Throw);
+        var returnBorrowed = clientBuilder.DefineMethod("ReturnBorrowedStream", MethodAttributes.Public | MethodAttributes.Static,
+            typeof(Stream), Type.EmptyTypes);
+        var returnBorrowedIl = returnBorrowed.GetILGenerator();
+        returnBorrowedIl.Emit(OpCodes.Ldsfld, borrowBuilder);
+        returnBorrowedIl.Emit(OpCodes.Ret);
+        var clientType = clientBuilder.CreateType()!;
+
+        var hook = new UiHook();
+        var failures = new List<string>();
+        var cases = 0;
+        var bridgeType = typeof(UiHook).Assembly.GetType("NutstoreMcp.UiHook.ReflectiveBridge", throwOnError: true)!;
+        var rawRun = bridgeType.GetMethod("Run", BindingFlags.Public | BindingFlags.Static)!;
+        object RunRaw(string script) => rawRun.Invoke(null, new object[] { script })!;
+        System.Collections.IList Slots(object result) => (System.Collections.IList)result.GetType().GetProperty("Slots")!.GetValue(result)!;
+        string? Error(object result) => (string?)result.GetType().GetProperty("Error")!.GetValue(result);
+        void Assert(bool condition, string label)
+        {
+            cases++;
+            if (!condition) failures.Add(label);
+        }
+        void Deny(string label, string script, int completedLines = 0)
+        {
+            var result = hook.InvokeBridge(script);
+            Assert(result.IndexOf("\"ok\":false", StringComparison.Ordinal) >= 0
+                && result.IndexOf("\"stepCount\":\"" + completedLines + "\"", StringComparison.Ordinal) >= 0,
+                label + "未在预期行拒绝：" + result);
+        }
+        string Value(params string[] fields) => "VALUE|" + ClientSymbols.CreateFileParamType
+            + (fields.Length == 0 ? string.Empty : "|" + string.Join("|", fields));
+        var valid = RunRaw("CALL|" + clientType.FullName + "|ReturnBorrowedStream\n"
+            + Value("size", "l:3", "hashBase64", "s:YWJj", "fullObjectNameBase64", "-",
+                "blockListNameBase64", "-", "compressible", "b:false"));
+        using ((IDisposable)valid)
+        {
+            var dto = Slots(valid)[1]!;
+            Assert(Error(valid) is null && dto.GetType() == dtoType
+                && (long)dtoType.GetField("size")!.GetValue(dto)! == 3L
+                && (string)dtoType.GetField("hashBase64")!.GetValue(dto)! == "abc"
+                && dtoType.GetField("fullObjectNameBase64")!.GetValue(dto) is null
+                && !(bool)dtoType.GetField("constructorTouched")!.GetValue(dto)!, "VALUE 精确字段、null与零初始化不运行ctor");
+        }
+
+        var reference = RunRaw(Value("hashBase64", "s:YWJj") + "\nGET|0|hashBase64\n" + Value("hashBase64", "#1"));
+        using ((IDisposable)reference)
+            Assert(Error(reference) is null && (string)dtoType.GetField("hashBase64")!.GetValue(Slots(reference)[2])! == "abc",
+                "VALUE 引用前序slot的精确类型值");
+        var pathReference = RunRaw("NEW|" + pathType.FullName + "\n" + Value("path", "#0"));
+        using ((IDisposable)pathReference)
+            Assert(Error(pathReference) is null && ReferenceEquals(Slots(pathReference)[0], dtoType.GetField("path")!.GetValue(Slots(pathReference)[1])),
+                "VALUE客户端引用字段仅写入新DTO，保持精确引用");
+        foreach (var item in new[]
+                 {
+                     (Label: "数值类型不匹配", Script: Value("size", "i:3")),
+                     (Label: "bool类型不匹配", Script: Value("compressible", "l:0")),
+                     (Label: "非可空字段null", Script: Value("size", "-")),
+                     (Label: "引用字段类型不匹配", Script: Value("path", "s:YWJj")),
+                     (Label: "重复字段", Script: Value("size", "l:1", "size", "l:2")),
+                     (Label: "static字段", Script: Value("StaticField", "l:1")),
+                     (Label: "readonly字段", Script: Value("ReadOnlyField", "l:1")),
+                     (Label: "private字段", Script: Value("PrivateField", "l:1")),
+                     (Label: "property不是field", Script: Value("PropertyOnly", "l:1")),
+                     (Label: "未知字段", Script: Value("Unknown", "l:1")),
+                     (Label: "未登记public可写字段", Script: Value("constructorTouched", "b:true")),
+                     (Label: "未登记public字段", Script: Value("constructorTouched", "b:true")),
+                     (Label: "字段参数不成对", Script: Value("size")),
+                     (Label: "非登记类型", Script: "VALUE|" + clientType.FullName),
+                 }) Deny("VALUE " + item.Label, item.Script);
+        Assert((long)dtoType.GetField("StaticField")!.GetValue(null)! == 0L, "VALUE拒绝static且原值未修改");
+        Deny("BUFFER额外参数", "BUFFER|YWJj|extra");
+        Deny("BUFFER无效base64", "BUFFER|!");
+        Deny("BUFFER base64空白", "BUFFER|YW Jj");
+
+        var small = RunRaw("BUFFER|YWJj");
+        var smallStream = (MemoryStream)Slots(small)[0]!;
+        using ((IDisposable)small)
+        {
+            Assert(Error(small) is null && smallStream.Length == 3 && smallStream.Position == 0
+                && smallStream.CanRead && !smallStream.CanWrite, "BUFFER只读流长度与初始位置");
+            var writeRefused = false;
+            try { smallStream.WriteByte(0); } catch (NotSupportedException) { writeRefused = true; }
+            var bufferHidden = false;
+            try { smallStream.GetBuffer(); } catch (UnauthorizedAccessException) { bufferHidden = true; }
+            Assert(writeRefused && bufferHidden, "BUFFER不允许写入且不暴露可变字节数组");
+        }
+        Assert(!smallStream.CanRead, "Result Dispose成功路径关闭BUFFER");
+        ((IDisposable)small).Dispose();
+        var empty = RunRaw("BUFFER|");
+        using ((IDisposable)empty)
+            Assert(Error(empty) is null && ((MemoryStream)Slots(empty)[0]!).Length == 0, "BUFFER空流支持");
+        Deny("BUFFER禁止INSTANCE .NET流", "BUFFER|YWJj\nINSTANCE|0|ReadByte", 1);
+        Deny("BUFFER禁止GET .NET流", "BUFFER|YWJj\nGET|0|Length", 1);
+        Deny("BUFFER禁止CHAIN .NET流", "BUFFER|YWJj\nCHAIN|0|Length", 1);
+
+        const int diagnosticBudget = 8 * 1024 * 1024;
+        var atLimit = RunRaw("BUFFER|" + Convert.ToBase64String(new byte[diagnosticBudget]));
+        using ((IDisposable)atLimit)
+            Assert(Error(atLimit) is null && ((MemoryStream)Slots(atLimit)[0]!).Length == diagnosticBudget, "BUFFER恰好8MiB支持");
+        Deny("BUFFER超过8MiB", "BUFFER|" + Convert.ToBase64String(new byte[diagnosticBudget + 1]));
+        var cumulative = RunRaw("BUFFER|" + Convert.ToBase64String(new byte[diagnosticBudget]) + "\nBUFFER|AA==");
+        var firstStream = (MemoryStream)Slots(cumulative)[0]!;
+        using ((IDisposable)cumulative)
+            Assert(Error(cumulative) is not null && Slots(cumulative).Count == 1, "BUFFER总预算也限制多条脚本");
+        Assert(!firstStream.CanRead, "Result Dispose失败路径关闭已创建BUFFER");
+
+        var nearLimit = "BUFFER|" + Convert.ToBase64String(new byte[diagnosticBudget - 1]);
+        Deny("BUFFER剩余1byte时拒绝同编码长度3byte数据", nearLimit + "\nBUFFER|AAAA", 1);
+        var fillLastByte = RunRaw(nearLimit + "\nBUFFER|AA==");
+        using ((IDisposable)fillLastByte)
+            Assert(Error(fillLastByte) is null && Slots(fillLastByte).Count == 2
+                && ((MemoryStream)Slots(fillLastByte)[1]!).Length == 1,
+                "BUFFER剩余1byte时接受合法1byte数据");
+
+        var captureScript = "BUFFER|YWJj\nCALL|" + clientType.FullName + "|CaptureBuffer|#0";
+        var success = hook.InvokeBridge(captureScript);
+        var captured = (Stream)clientType.GetField("CapturedStream")!.GetValue(null)!;
+        Assert(success.IndexOf("\"ok\":true", StringComparison.Ordinal) >= 0 && !captured.CanRead,
+            "UiHook成功JSON输出后释放BUFFER，client可作为Stream参数读取");
+        var failure = hook.InvokeBridge(captureScript + "\n" + Value("Unknown", "l:1"));
+        captured = (Stream)clientType.GetField("CapturedStream")!.GetValue(null)!;
+        Assert(failure.IndexOf("\"ok\":false", StringComparison.Ordinal) >= 0 && !captured.CanRead,
+            "UiHook脚本后续失败仍释放已传给client的BUFFER");
+        var clientFailure = hook.InvokeBridge("BUFFER|YWJj\nCALL|" + clientType.FullName + "|CaptureBufferAndThrow|#0");
+        captured = (Stream)clientType.GetField("CapturedStream")!.GetValue(null)!;
+        Assert(clientFailure.IndexOf("\"ok\":false", StringComparison.Ordinal) >= 0
+            && clientFailure.IndexOf("InvalidOperationException", StringComparison.Ordinal) >= 0
+            && clientFailure.IndexOf("bridge-sensitive-message-marker", StringComparison.Ordinal) < 0
+            && !captured.CanRead, "客户端异常不泄漏原始message且释放已传入BUFFER");
+        using (var borrowed = new MemoryStream(new byte[] { 1 }, writable: false))
+        {
+            clientType.GetField("BorrowedStream")!.SetValue(null, borrowed);
+            var borrowedResult = hook.InvokeBridge("CALL|" + clientType.FullName + "|ReturnBorrowedStream");
+            Assert(borrowedResult.IndexOf("\"ok\":true", StringComparison.Ordinal) >= 0 && borrowed.CanRead,
+                "Result不Dispose客户端返回的其他流对象");
+        }
+        return (failures.Count == 0, failures.Count == 0
+            ? $"{cases} 个内存DTO/流用例通过；成功与失败都释放自有流，无通用SET"
+            : string.Join("; ", failures));
+    }
+
+    private static (bool, string) Bridge_MetadataSignaturesAndArraysAreRejected()
+    {
+        // 所有类型均由内存 fake 生成，不加载真实客户端，不调用真实网络实现。
+        var assembly = AppDomain.CurrentDomain.DefineDynamicAssembly(
+            new AssemblyName("NutstoreClient.MetadataSignatureProbe"), AssemblyBuilderAccess.Run);
+        var module = assembly.DefineDynamicModule("MemoryOnly");
+        var builder = module.DefineType("NutstoreClient.MetadataSignatureClient", TypeAttributes.Public | TypeAttributes.Class);
+        builder.DefineDefaultConstructor(MethodAttributes.Public);
+        var unsafeCount = builder.DefineField("UnsafeInvocationCount", typeof(int), FieldAttributes.Public | FieldAttributes.Static);
+        var safeCount = builder.DefineField("SafeInvocationCount", typeof(int), FieldAttributes.Public | FieldAttributes.Static);
+        var runtimeCount = builder.DefineField("RuntimeReturnCount", typeof(int), FieldAttributes.Public | FieldAttributes.Static);
+        var runtimeSource = builder.DefineField("RuntimeSource", typeof(object[]), FieldAttributes.Public | FieldAttributes.Static);
+
+        void Count(ILGenerator il, FieldBuilder counter)
+        {
+            il.Emit(OpCodes.Ldsfld, counter);
+            il.Emit(OpCodes.Ldc_I4_1);
+            il.Emit(OpCodes.Add);
+            il.Emit(OpCodes.Stsfld, counter);
+        }
+
+        foreach (var pair in new[]
+                 {
+                     (Name: "Type", Type: typeof(Type)),
+                     (Name: "TypeArray", Type: typeof(Type[])),
+                     (Name: "TypeMatrix", Type: typeof(Type[,])),
+                     (Name: "TypeList", Type: typeof(List<Type>)),
+                     (Name: "TypeMap", Type: typeof(Dictionary<string, Type>)),
+                     (Name: "RefType", Type: typeof(Type).MakeByRefType()),
+                     (Name: "OutType", Type: typeof(Type).MakeByRefType()),
+                 })
+        {
+            var method = builder.DefineMethod("Accept" + pair.Name, MethodAttributes.Public | MethodAttributes.Static,
+                typeof(void), new[] { pair.Type });
+            if (pair.Name == "OutType") method.DefineParameter(1, ParameterAttributes.Out, "metadata");
+            var il = method.GetILGenerator();
+            Count(il, unsafeCount);
+            il.Emit(OpCodes.Ret);
+        }
+
+        foreach (var pair in new[]
+                 {
+                     (Name: "TypeArray", Type: typeof(Type[])),
+                     (Name: "TypeList", Type: typeof(List<Type>)),
+                 })
+        {
+            foreach (var isStatic in new[] { true, false })
+            {
+                var method = builder.DefineMethod("Return" + pair.Name + (isStatic ? "" : "Instance"),
+                    MethodAttributes.Public | (isStatic ? MethodAttributes.Static : 0), pair.Type, Type.EmptyTypes);
+                var il = method.GetILGenerator();
+                Count(il, unsafeCount);
+                il.Emit(OpCodes.Ldnull);
+                il.Emit(OpCodes.Ret);
+            }
+            var getter = builder.DefineMethod("get_" + pair.Name, MethodAttributes.Public | MethodAttributes.SpecialName,
+                pair.Type, Type.EmptyTypes);
+            var getterIl = getter.GetILGenerator();
+            Count(getterIl, unsafeCount);
+            getterIl.Emit(OpCodes.Ldnull);
+            getterIl.Emit(OpCodes.Ret);
+            var property = builder.DefineProperty(pair.Name, PropertyAttributes.None, pair.Type, Type.EmptyTypes);
+            property.SetGetMethod(getter);
+        }
+
+        var consume = builder.DefineMethod("AcceptObjects", MethodAttributes.Public | MethodAttributes.Static,
+            typeof(void), new[] { typeof(object[]) });
+        var consumeIl = consume.GetILGenerator();
+        Count(consumeIl, unsafeCount);
+        consumeIl.Emit(OpCodes.Ret);
+        var runtimeReturn = builder.DefineMethod("ReturnObjects", MethodAttributes.Public | MethodAttributes.Static,
+            typeof(object[]), Type.EmptyTypes);
+        var runtimeIl = runtimeReturn.GetILGenerator();
+        Count(runtimeIl, runtimeCount);
+        runtimeIl.Emit(OpCodes.Ldsfld, runtimeSource);
+        runtimeIl.Emit(OpCodes.Ret);
+
+        foreach (var pair in new[]
+                 {
+                     (Name: "String", Type: typeof(string)),
+                     (Name: "Bytes", Type: typeof(byte[])),
+                     (Name: "Stream", Type: typeof(Stream)),
+                 })
+        {
+            var method = builder.DefineMethod("Echo" + pair.Name, MethodAttributes.Public | MethodAttributes.Static,
+                pair.Type, new[] { pair.Type });
+            var il = method.GetILGenerator();
+            Count(il, safeCount);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ret);
+        }
+        var dtoType = AppDomain.CurrentDomain.GetAssemblies()
+            .Select(a => a.GetType(ClientSymbols.CreateFileParamType, throwOnError: false)).First(t => t != null)!;
+        var acceptDto = builder.DefineMethod("AcceptDto", MethodAttributes.Public | MethodAttributes.Static,
+            typeof(long), new[] { dtoType });
+        var dtoIl = acceptDto.GetILGenerator();
+        Count(dtoIl, safeCount);
+        dtoIl.Emit(OpCodes.Ldarga_S, (byte)0);
+        dtoIl.Emit(OpCodes.Ldfld, dtoType.GetField("size")!);
+        dtoIl.Emit(OpCodes.Ret);
+        var refBool = builder.DefineMethod("FlipBool", MethodAttributes.Public | MethodAttributes.Static,
+            typeof(void), new[] { typeof(bool).MakeByRefType() });
+        refBool.DefineParameter(1, ParameterAttributes.None, "full");
+        var refIl = refBool.GetILGenerator();
+        Count(refIl, safeCount);
+        refIl.Emit(OpCodes.Ldarg_0);
+        refIl.Emit(OpCodes.Ldc_I4_1);
+        refIl.Emit(OpCodes.Stind_I1);
+        refIl.Emit(OpCodes.Ret);
+        var clientType = builder.CreateType()!;
+
+        var ctorBuilder = module.DefineType("NutstoreClient.MetadataSignatureConstructor", TypeAttributes.Public | TypeAttributes.Class);
+        var ctorCountBuilder = ctorBuilder.DefineField("CreationCount", typeof(int), FieldAttributes.Public | FieldAttributes.Static);
+        foreach (var parameterType in new[] { typeof(Type), typeof(Type[]), typeof(List<Type>) })
+        {
+            var ctor = ctorBuilder.DefineConstructor(MethodAttributes.Public, CallingConventions.Standard, new[] { parameterType });
+            var il = ctor.GetILGenerator();
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Call, typeof(object).GetConstructor(Type.EmptyTypes)!);
+            Count(il, ctorCountBuilder);
+            il.Emit(OpCodes.Ret);
+        }
+        var ctorType = ctorBuilder.CreateType()!;
+        var overloadBuilder = module.DefineType("NutstoreClient.MetadataOverloadConstructor", TypeAttributes.Public | TypeAttributes.Class);
+        var safeCtorCountBuilder = overloadBuilder.DefineField("SafeCreationCount", typeof(int), FieldAttributes.Public | FieldAttributes.Static);
+        var unsafeCtorCountBuilder = overloadBuilder.DefineField("UnsafeCreationCount", typeof(int), FieldAttributes.Public | FieldAttributes.Static);
+        var stringField = overloadBuilder.DefineField("StringValue", typeof(string), FieldAttributes.Public);
+        foreach (var parameterType in new[] { typeof(string), typeof(Type) })
+        {
+            var ctor = overloadBuilder.DefineConstructor(MethodAttributes.Public, CallingConventions.Standard, new[] { parameterType });
+            var il = ctor.GetILGenerator();
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Call, typeof(object).GetConstructor(Type.EmptyTypes)!);
+            Count(il, parameterType == typeof(string) ? safeCtorCountBuilder : unsafeCtorCountBuilder);
+            if (parameterType == typeof(string))
+            {
+                il.Emit(OpCodes.Ldarg_0);
+                il.Emit(OpCodes.Ldarg_1);
+                il.Emit(OpCodes.Stfld, stringField);
+            }
+            il.Emit(OpCodes.Ret);
+        }
+        var overloadType = overloadBuilder.CreateType()!;
+        var safeCtorCounter = overloadType.GetField(safeCtorCountBuilder.Name)!;
+        var unsafeCtorCounter = overloadType.GetField(unsafeCtorCountBuilder.Name)!;
+        var unsafeCounter = clientType.GetField(unsafeCount.Name)!;
+        var safeCounter = clientType.GetField(safeCount.Name)!;
+        var runtimeCounter = clientType.GetField(runtimeCount.Name)!;
+        var ctorCounter = ctorType.GetField(ctorCountBuilder.Name)!;
+        var hook = new UiHook();
+        var bridgeType = typeof(UiHook).Assembly.GetType("NutstoreMcp.UiHook.ReflectiveBridge", throwOnError: true)!;
+        var rawStatic = bridgeType.GetMethod("InvokeStatic", BindingFlags.NonPublic | BindingFlags.Static)!;
+        var rawConstruct = bridgeType.GetMethod("Construct", BindingFlags.NonPublic | BindingFlags.Static)!;
+        var failures = new List<string>();
+        var cases = 0;
+        void Assert(bool condition, string label)
+        {
+            cases++;
+            if (!condition) failures.Add(label);
+        }
+        void Deny(string label, string script, int completedLines = 0)
+        {
+            var result = hook.InvokeBridge(script);
+            Assert(result.IndexOf("\"ok\":false", StringComparison.Ordinal) >= 0
+                && result.IndexOf("\"stepCount\":\"" + completedLines + "\"", StringComparison.Ordinal) >= 0
+                && (int)unsafeCounter.GetValue(null)! == 0 && (int)ctorCounter.GetValue(null)! == 0,
+                label + "未在实现执行前拒绝：" + result);
+        }
+        void RejectRaw(string label, Action action)
+        {
+            var refused = false;
+            try { action(); }
+            catch (TargetInvocationException ex) when (ex.InnerException is ArgumentException) { refused = true; }
+            Assert(refused && (int)unsafeCounter.GetValue(null)! == 0 && (int)ctorCounter.GetValue(null)! == 0,
+                label + "未在实现执行前拒绝");
+        }
+        object? InvokeRaw(string method, params object?[] args) => rawStatic.Invoke(null,
+            new object[] { clientType, method, args.ToList(), new Dictionary<string, string>(), 0 });
+        var call = "CALL|" + clientType.FullName + "|";
+        var newClient = "NEW|" + clientType.FullName;
+        foreach (var name in new[] { "Type", "TypeArray", "TypeMatrix", "TypeList", "TypeMap", "RefType", "OutType" })
+            Deny("null不能绕过" + name + "参数签名", call + "Accept" + name + "|-");
+        foreach (var name in new[] { "TypeArray", "TypeList" })
+        {
+            Deny("CALL反射容器返回签名" + name, call + "Return" + name);
+            Deny("INSTANCE反射容器返回签名" + name, newClient + "\nINSTANCE|0|Return" + name + "Instance", 1);
+            Deny("GET反射容器getter签名" + name, newClient + "\nGET|0|" + name, 1);
+            Deny("CHAIN反射容器getter签名" + name, newClient + "\nCHAIN|0|" + name, 1);
+        }
+        Deny("null不能绕过构造反射参数签名", "NEW|" + ctorType.FullName + "|-");
+        foreach (var value in new object[] { typeof(string), new Type[] { typeof(string) }, new List<Type> { typeof(string) } })
+            RejectRaw("构造反射参数" + value.GetType().Name,
+                () => rawConstruct.Invoke(null, new object[] { ctorType, new List<object?> { value } }));
+        var stringCtor = hook.InvokeBridge("NEW|" + overloadType.FullName + "|s:YWJj\nGET|0|StringValue");
+        Assert(stringCtor.IndexOf("\"ok\":true", StringComparison.Ordinal) >= 0
+            && stringCtor.IndexOf("\"value\":\"abc\"", StringComparison.Ordinal) >= 0
+            && (int)safeCtorCounter.GetValue(null)! == 1 && (int)unsafeCtorCounter.GetValue(null)! == 0,
+            "同参数数量存在Type重载时合法string构造仍执行");
+        var nullCtor = hook.InvokeBridge("NEW|" + overloadType.FullName + "|-");
+        Assert(nullCtor.IndexOf("\"ok\":false", StringComparison.Ordinal) >= 0
+            && nullCtor.IndexOf("AmbiguousMatchException", StringComparison.Ordinal) >= 0
+            && (int)safeCtorCounter.GetValue(null)! == 1 && (int)unsafeCtorCounter.GetValue(null)! == 0,
+            "string/Type构造null歧义拒绝且不执行任一构造");
+
+        foreach (var value in new object[]
+                 {
+                     typeof(string), typeof(string).GetMethod("ToString", Type.EmptyTypes)!, assembly, module,
+                     (Action)(() => { }),
+                 })
+        {
+            var nested = new object[] { new object[] { value } };
+            RejectRaw("嵌套object[]反射参数" + value.GetType().Name, () => InvokeRaw("AcceptObjects", nested));
+            clientType.GetField(runtimeSource.Name)!.SetValue(null, nested);
+            var before = (int)runtimeCounter.GetValue(null)!;
+            var result = hook.InvokeBridge(call + "ReturnObjects");
+            Assert(result.IndexOf("\"ok\":false", StringComparison.Ordinal) >= 0
+                && (int)runtimeCounter.GetValue(null)! == before + 1,
+                "object[]运行时反射返回值未拒绝");
+        }
+        var cycle = new object[1];
+        cycle[0] = cycle;
+        Assert(InvokeRaw("EchoString", "abc") as string == "abc", "合法string签名可调用");
+        var bytes = new byte[] { 1, 2, 3 };
+        Assert(ReferenceEquals(bytes, InvokeRaw("EchoBytes", bytes)), "合法byte[]签名与参数可调用");
+        using (var stream = new MemoryStream(bytes, writable: false))
+            Assert(ReferenceEquals(stream, InvokeRaw("EchoStream", stream)) && stream.CanRead, "合法只读Stream参数可调用");
+        var dtoResult = hook.InvokeBridge("VALUE|" + ClientSymbols.CreateFileParamType + "|size|l:7\n" + call + "AcceptDto|#0");
+        Assert(dtoResult.IndexOf("\"ok\":true", StringComparison.Ordinal) >= 0
+            && dtoResult.IndexOf("\"value\":\"7\"", StringComparison.Ordinal) >= 0, "合法VALUE DTO参数可调用");
+        var refResult = hook.InvokeBridge(call + "FlipBool|b:false");
+        Assert(refResult.IndexOf("\"ok\":true", StringComparison.Ordinal) >= 0
+            && refResult.IndexOf("full => True", StringComparison.Ordinal) >= 0, "合法ref bool保留写回");
+        Assert((int)safeCounter.GetValue(null)! == 5, "五种合法签名均真正执行fake实现");
+        // 返回循环数组应有界完成；不能为扫描容器而无限递归。
+        clientType.GetField(runtimeSource.Name)!.SetValue(null, cycle);
+        var cycleResult = hook.InvokeBridge(call + "ReturnObjects");
+        Assert(cycleResult.IndexOf("\"ok\":true", StringComparison.Ordinal) >= 0, "普通循环object[]扫描有界完成");
+        return (failures.Count == 0, failures.Count == 0
+            ? $"{cases} 个签名/嵌套数组用例通过；危险实现与构造执行次数为0，合法参数与ref bool仍可用"
+            : string.Join("; ", failures));
     }
 
     /// <summary>从 Json.Obj 产出的 JSON 里抠出 type 字段。</summary>

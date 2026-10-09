@@ -2254,7 +2254,7 @@ public sealed partial class UiHook : MarshalByRefObject, IUiHook
     {
         try
         {
-            var result = ReflectiveBridge.Run(script);
+            using var result = ReflectiveBridge.Run(script);
 
             var slots = new StringBuilder();
             slots.Append('[');
@@ -2278,6 +2278,8 @@ public sealed partial class UiHook : MarshalByRefObject, IUiHook
                 ("ok", result.Error is null),
                 ("domain", AppDomain.CurrentDomain.FriendlyName),
                 ("error", result.Error),
+                ("errorCode", result.ErrorCode),
+                ("httpStatus", result.HttpStatus),
                 ("stepCount", result.Slots.Count.ToString(CultureInfo.InvariantCulture)),
                 ("steps", Json.StringArray(result.Lines)),
                 ("slots", new Json.Raw(slots.ToString())),

@@ -4,10 +4,12 @@ namespace NutstoreMcp.ClientBindings;
 internal static class ClientSymbols
 {
     public const string VerifiedClientVersion = "7.2.12.0";
-    public const string BaselineFileName = "baseline-7.2.12.json";
+    public const string BaselineFileName = "baseline-7.2.12-upload.json";
     public const string CloudOpsAssembly = "NutstoreClient.Legacy.dll";
     public const string CloudOpsType = "A.c3795a089d76f103f11c4fe70f38ac8ca";
     public const string CommonAssembly = "Nutstore.Common.dll";
+    public const string LibraryAssembly = "NutstoreLib.dll";
+    public const string StringUtilsType = "NutstoreLib.Utils.StringUtils";
     public const string NutstorePathType = "NutstoreClient.Common.NutstorePath";
     public const string NSSandboxType = "NutstoreClient.Common.NSSandbox";
     public const string NutstoreObjectType = "NutstoreClient.Common.NutstoreObject";
@@ -17,6 +19,10 @@ internal static class ClientSymbols
     public const string DownstreamCommandType = "NutstoreClient.Commands.DownstreamObjectCommand";
     public const string SandboxDaoType = "NutstoreClient.DAO.NSSandboxDAO";
     public const string CapsOnPathType = "NutstoreClient.Common.CapsOnPathBean";
+    public const string CreateFileParamType = "NutstoreClient.Helpers.CreateFileParam";
+    public const string CompressionMethodType = "NutstoreClient.Connection.CompressionMethod";
+    public const string HashAlgorithmsType = "Nutstore.Common.Helpers.HashAlgorithms";
+    public const string RequestExceptionType = "NutstoreClient.Connection.RequestException";
     public const int CloudPathMaxUtf8Bytes = 767;
     public const int SyncErrorUnknown = 0;
     public const int SyncErrorFileSizeLimit = 1;
@@ -40,6 +46,9 @@ internal static class ClientSymbols
     public const string DownloadContent = "c089b7574cb46db5e6d9bba4e0e0a6002";
     public const string MoveFile = "cfa4bff2b588c3bab781ef7189ef94b90";
     public const string ReadPathAcl = "c5c78b21a991a876d4bd8093b70f39202";
+    public const string UploadFullContent = "c6e98b16ca153095711ef04f770d2ca53";
+    public const string UploadDeltaContent = "cd20b0bb262184cd692f5b3bba1477f24";
+    public const string CreateFileMetadata = "cf02e04aba958d38757ce778e8f94ae50";
 
     // 调查过的入口也参与升级检查；登记不代表允许执行。
     public const string ReadEventsWithLocalWrites = "c524be38afabc83eacc7d38aceea8700c";
@@ -52,6 +61,7 @@ internal static class ClientSymbols
         "UnregisterAllNutstoreSyncRoots", "UnregisterSyncRootsOfAccount", "UnregisterSyncRoot",
         "DisconnectSyncRoot", "DisableSyncRootOnDemandPopulation", "RemoveAUMIDToSyncRoots",
         "DeleteObject", "RemoveObject", DeleteSandbox, "MakeDeleteSandboxRequest", DeleteObject,
+        "GetFieldValue", "SetFieldValue", "GetPropertyValue", "SetPropertyValue",
     };
 
     public static ClientSymbol[] Definitions => new[]
@@ -72,6 +82,26 @@ internal static class ClientSymbols
         Entry(nameof(DownloadContent), DownloadContent, "下载内容（返回流）", "read"),
         Entry(nameof(MoveFile), MoveFile, "移动普通文件", "write"),
         Entry(nameof(ReadPathAcl), ReadPathAcl, "路径权限查询", "read"),
+        Entry(nameof(UploadFullContent), UploadFullContent, "上传全量内容；不等于创建文件", "write"),
+        Entry(nameof(UploadDeltaContent), UploadDeltaContent, "增量内容上传；未开放", "write"),
+        Entry(nameof(CreateFileMetadata), CreateFileMetadata, "创建文件元数据；碰撞语义待在线核实", "write"),
+        new ClientSymbol("CompressionMethodValues", CloudOpsAssembly, CompressionMethodType,
+            "", "上传压缩枚举", "read", "enum"),
+        Support("UploadMd5", CommonAssembly, HashAlgorithmsType, "GetMd5Digest"),
+        Support("UploadMd5Encoding", LibraryAssembly, StringUtilsType, "BytesToURLSafeBase64String"),
+        Support("RequestErrorCode", CloudOpsAssembly, RequestExceptionType, "ErrorCode", "property"),
+        Support("RequestHttpStatus", CloudOpsAssembly, RequestExceptionType, "ReturnCode", "property"),
+        Support("CreateFileParamPath", CloudOpsAssembly, CreateFileParamType, "path", "field"),
+        Support("CreateFileParamSize", CloudOpsAssembly, CreateFileParamType, "size", "field"),
+        Support("CreateFileParamHash", CloudOpsAssembly, CreateFileParamType, "hashBase64", "field"),
+        Support("CreateFileParamFullObject", CloudOpsAssembly, CreateFileParamType, "fullObjectNameBase64", "field"),
+        Support("CreateFileParamBlockList", CloudOpsAssembly, CreateFileParamType, "blockListNameBase64", "field"),
+        Support("CreateFileParamCompressible", CloudOpsAssembly, CreateFileParamType, "compressible", "field"),
+        Support("CreateFileParamExAttr", CloudOpsAssembly, CreateFileParamType, "exAttr", "field"),
+        Support("ReflectionReadField", CloudOpsAssembly, "NutstoreClient.Helpers.ReflectionHelper", "GetFieldValue", effect: "forbidden"),
+        Support("ReflectionWriteField", CloudOpsAssembly, "NutstoreClient.Helpers.ReflectionHelper", "SetFieldValue", effect: "forbidden"),
+        Support("ReflectionReadProperty", CloudOpsAssembly, "NutstoreClient.Helpers.ReflectionHelper", "GetPropertyValue", effect: "forbidden"),
+        Support("ReflectionWriteProperty", CloudOpsAssembly, "NutstoreClient.Helpers.ReflectionHelper", "SetPropertyValue", effect: "forbidden"),
         Entry(nameof(ReadEventsWithLocalWrites), ReadEventsWithLocalWrites,
             "读取事件且写 EventDb、未读数和最近页；未开放", "local-write"),
         Entry(nameof(DeleteSandbox), DeleteSandbox, "删除整个云端沙箱；禁止调用", "forbidden"),

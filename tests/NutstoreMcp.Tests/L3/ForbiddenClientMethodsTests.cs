@@ -34,6 +34,10 @@ public class ForbiddenClientMethodsTests
         ClientSymbols.DeleteSandbox,
         "MakeDeleteSandboxRequest",
         ClientSymbols.DeleteObject,
+        "GetFieldValue",
+        "SetFieldValue",
+        "GetPropertyValue",
+        "SetPropertyValue",
     ];
 
     [Theory]
