@@ -21,14 +21,14 @@ public sealed partial class PluginTools
     [Description("【默认只预演】把本地空目录绑定为坚果云同步文件夹。需要内容为 yes 的 l3-write.enabled 令牌、confirm=true、dryRun=false；本地目录必须为空、不与现有同步根重叠，沙箱必须尚未绑定且身份与权限已确认。")]
     public static string L3CreateSyncFolder(
         [Description("要绑定的本地目录（必须已存在且为空）")] string localPath,
-        [Description("要绑定的云端沙箱 ID（必须 >0）。用 nutstore_sync_folders 查未绑定的沙箱")] long sandboxId = 0,
+        [Description("要绑定的云端沙箱 ID（必须 >0）。从云端沙箱列表确认未绑定的沙箱；本地只读的 L2 发现工具已退役")] long sandboxId = 0,
         [Description("必须显式传 true 才可能执行")] bool confirm = false,
         [Description("默认 true（只预演不执行）")] bool dryRun = true,
         [Description("沙箱的同步状态；必须是 NotSynced 才放行")] string? sandboxSyncState = null,
         [Description("现有同步根路径列表，分号分隔。不传则因无法确认重叠而拒绝")] string? existingBindings = null,
-        [Description("沙箱的内部标识（来自 nutstore_l3_bind_candidates 的 magic）。绑定必须原样带上")] long magic = 0,
-        [Description("路径权限的 path 列表（来自 bind_candidates 的 pathPerms[].path），与 permCaps 一一对应")] string[]? permPaths = null,
-        [Description("路径权限的 caps 列表（来自 bind_candidates 的 pathPerms[].caps），与 permPaths 一一对应")] long[]? permCaps = null)
+        [Description("沙箱的内部标识（magic，需与 sandboxId 成对提供）。绑定必须原样带上")] long magic = 0,
+        [Description("路径权限的 path 列表（需与 permCaps 一一对应；从客户端/云端确认该沙箱的路径权限）")] string[]? permPaths = null,
+        [Description("路径权限的 caps 列表（需与 permPaths 一一对应；从客户端/云端确认该沙箱的路径权限）")] long[]? permCaps = null)
     {
         try
         {
@@ -114,7 +114,7 @@ public sealed partial class PluginTools
                     // fail-closed：没有权限信息就不绑定
                     refusals.Add(
                         "缺少 pathPerms（permPaths / permCaps）—— 绑定一个权限不明的沙箱"
-                        + "比不绑定危险得多。请从 nutstore_l3_bind_candidates 取。");
+                        + "比不绑定危险得多。请先确认该沙箱的云端路径权限。");
                 }
                 else
                 {
@@ -332,7 +332,7 @@ public sealed partial class PluginTools
     }
 
     [McpServerTool(Name = "nutstore_l3_list_cloud_dir", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = true)]
-    [Description("列出云端某个目录下的内容，走客户端自己的实现（不需要任何第三方凭据）。只读操作，不需要解锁令牌。沙箱 ID 与 magic 从 nutstore_l3_sync_folders 或 nutstore_l3_bind_candidates 取。")]
+    [Description("列出云端某个目录下的内容，走客户端自己的实现（不需要任何第三方凭据）。只读操作，不需要解锁令牌。沙箱 ID 与 magic 从 nutstore_l3_sync_folders 取（该工具只列已绑定的沙箱）。")]
     public static string L3ListCloudDir(
         [Description("沙箱 ID")] long sandboxId,
         [Description("沙箱的内部标识（magic）")] long magic,

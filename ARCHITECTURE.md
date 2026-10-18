@@ -21,7 +21,7 @@
 已禁止；`cbbb.../c0db...` 实际写团队初始化/指南文件；`c524...` 拉云端事件时
 同时写本地 EventDb 与未读计数，不能声明为纯只读。返回 bool/void 不能证明行为。
 
-L1/L2 独立服务器继续保留，尚未执行退除决定。测试修改只用新建对象，原有
+L1/L2 独立服务器已于 2026-10-18 按用户决定退役，代码与测试删除；当前只保留客户端插件方案。测试修改只用新建对象，原有
 用户数据仅只读引用。完整在线证据见 `docs/调试验证记录.md`。
 
 混淆绑定唯一源码为 `src/NutstoreMcp.ClientBindings/ClientSymbols.cs`，通过源码 link
@@ -36,8 +36,8 @@ L1/L2 独立服务器继续保留，尚未执行退除决定。测试修改只�
 
 | 能力 | 类型 | 归属层 |
 |---|---|---|
-| 浏览云端目录 | 读 | L1 / L3 |
-| 读同步状态、哪些没同步完 | 读 | L2 |
+| 浏览云端目录 | 读 | L3 |
+| 读同步状态、哪些没同步完 | 读 | 当前不提供（随 L2 退役移除） |
 | 读/改客户端设置（开关类） | 读写 | L3 |
 | 创建新的同步目录 | 写 | L3 |
 | 把远程目录同步到本地 | 写 | L3 |
@@ -45,41 +45,33 @@ L1/L2 独立服务器继续保留，尚未执行退除决定。测试修改只�
 
 ---
 
-## 2. 三层架构
+## 2. 当前架构
 
 ```
-┌─ L1 文件面 ── WebDAV ───────────────────────────────┐
-│  https://dav.jianguoyun.com/dav/   Basic + 应用密码  │
-│  职责：云端文件读写                                   │
-│  稳定性：官方接口，长期可用                            │
-└──────────────────────────────────────────────────────┘
-┌─ L2 数据面 ── 本地只读 ──────────────────────────────┐
-│  %APPDATA%\Nutstore\db1\nutstore.db （只读，WAL）     │
-│  职责：sandbox↔本地路径映射、逐文件同步状态、设置快照   │
-│  稳定性：格式未公开，随版本可能变；只读风险可控          │
-└──────────────────────────────────────────────────────┘
-┌─ L3 控制面 ── 待定 ─────────────────────────────────┐
-│  候选 A：抓包复刻客户端私有 API   ← 优先             │
-│  候选 B：UI Automation 驱动 GUI   ← 兜底             │
-│  职责：创建同步目录、改设置、触发菜单动作               │
-│  稳定性：A 未验证；B 能用但随版本脆弱                   │
+┌─ 客户端进程 ─────────────────────────────────────────┐
+│  默认域：NutstoreMcp.UiHook（用客户端自己的实现）      │
+│  插件子域：NutstoreMcp.Plugin（MCP Streamable HTTP）   │
+│  端点：http://127.0.0.1:17321/mcp，只监听本机          │
+│  稳定性：随客户端版本变化需要复核绑定                  │
 └──────────────────────────────────────────────────────┘
 ```
 
-**分层原则：各层独立降级。** L3 做不出来不影响 L1/L2 可用；L2 格式变了不影响 L1。
+**早期独立服务器（L1 WebDAV 文件面 / L2 本地只读数据面）已于 2026-10-18 退役**，
+原因是 L1 需要用户额外申请的应用密码，与插件「零第三方凭据」的路线冲突。
+下方 L1/L2 章节与选型记录仅作历史追溯，相关代码、测试和发布脚本已删除。
 
 ---
 
 ## 3. 各层实现要点
 
-### L1 WebDAV
+### L1 WebDAV（已退役，仅作历史记录）
 
 - 认证：账号 + **应用密码**（网页端「账户信息 → 安全选项 → 第三方应用管理」生成），不是登录密码
 - 硬限制：单文件上传 **500 MB**；请求频率 **600 次/30 分钟**（免费）/ 1500（付费）；单次目录枚举 **750 项，必须分页**
 - 因此：**禁止递归全盘扫描**，只能按需读
 - 路径映射：本地 `%USERPROFILE%\Nutstore\<短名>\<X>\...` ↔ 云端 `/<X>/...`
 
-### L2 本地只读
+### L2 本地只读（已退役，仅作历史记录）
 
 - `config.all_sandbox_list`：完整云端 sandbox 列表，含 `sandboxId` / `usedSpace` / `canSync` / `doNotSync` / `desc`
 - `sndconfig<hash>`：`sandbox_name` = `{"id":…,"magic":…,"localAbsPath":"C:\\…"}`
@@ -113,27 +105,18 @@ L1/L2 独立服务器继续保留，尚未执行退除决定。测试修改只�
 
 ## 4. 技术选型
 
-**C# / .NET 10，可发布为自包含单文件 —— 目标机器无需安装运行时。**
+**插件与钩子用 C#：钩子和插件随坚果云客户端运行，目标框架是客户端的 .NET Framework 4.8；
+测试、绑定检查与构建工具用 .NET 10。** 不需要单独安装运行时，也不发布独立可执行文件。
 
-理由：
+- **与宿主同栈。** 坚果云客户端是 C# / WPF / .NET Framework
+  （MahApps.Metro + Prism；安装目录里没有任何 Electron / CEF / Chromium）。
+  默认域钩子可以直接使用客户端自己的类型与 WPF 控件树，插件通过共享契约跨域调用。
+- **零第三方凭据。** 插件只使用客户端已登录的会话，不要求用户申请
+  WebDAV 应用密码之类的外部凭据。
+- **排除 Python/Go 等独立进程方案**：它们需要额外运行时或凭据，
+  与「客户端进程内调用」的路线冲突；早期 L1 独立服务器已按此结论退役。
 
-- **与宿主同栈。** 坚果云客户端是 C# / WPF / .NET Framework 4.6.2
-  （MahApps.Metro + Prism；`Microsoft.Web.WebView2.**Wpf**.dll` 只是嵌入式控件，
-  安装目录里没有任何 Electron / CEF / Chromium）。同栈的直接收益是 L3：
-  若走 UI Automation，`System.Windows.Automation` 是一等公民；
-  换别的语言要手写 `IUIAutomation` 的 COM 互操作，成本高一个数量级。
-- **部署零依赖。** `dotnet publish -r win-x64 --self-contained` 产出
-  `nutstore-mcp.exe` + `e_sqlite3.dll`（约 39 MB），目标机器不需要装 .NET。
-- 排除 Python：本机 `python` 只有 WindowsApps 占位桩、无 `uv`/`uvx`，
-  现成的 PyPI 方案开箱不可用。
-- 排除 Go：运行时与体积确实更优，但没有 UIA 绑定 —— 会把 L3 带进沟里。
-
-**注意**：不要用 `IncludeNativeLibrariesForSelfExtract` 追求「真·单文件」。
-它把原生库压进 exe 并在运行时解包到 `%TEMP%\.net`，在 `%TEMP%` 对进程不可写的
-机器上会直接启动失败（实测 `error code: 5`）。两文件形态在哪都能跑。
-
-接入 DSH：`@deepseek-ai/dsh-mcp-client`，`transport: stdio`，`command` 指向发布出的 exe，
-在 `~/.dsh/profiles/web/cordis.patch.yml` 追加一条 `insert` 配置项。
+接入 DSH：`transport: streamable-http`，`url: http://127.0.0.1:17321/mcp`。
 
 ---
 
@@ -337,8 +320,8 @@ class DownstreamBindSandboxCommand {
 
 **流程**：
 
-1. 读云端沙箱列表，筛出 `SyncState == NotSynced` 的（L2 的 `nutstore_sync_folders`
-   已经把它们作为 `UnmountedSandbox` 暴露出来了）
+1. 读云端沙箱列表，筛出 `SyncState == NotSynced` 的（早期 L2 的 `nutstore_sync_folders`
+   曾把它们作为 `UnmountedSandbox` 暴露；L2 已于 2026-10-18 退役）
 2. 拿它的 `SandboxId` / `SandboxMagic` / `PathPerms`
 3. 选一个**空的**本地目录
 4. `SetSyncLocation(localPath)` → `new DownstreamBindSandboxCommand(info)` 投递
@@ -362,13 +345,13 @@ class NutstoreClient.Context.DownstreamCommandQueue {
 仍然缺的是**怎么拿到活的队列实例**（`NSSandboxContext` 的实例属性，
 而构造它需要一个 `NSSandbox`）。这需要客户端运行时，也就是默认域。
 
-### 数据流的结论：绑定不需要 L2 帮忙
+### 数据流的结论：绑定不需要本地库解析
 
-L2 的 `all_sandbox_list` 解析**刻意不导出 `magic`**（「内部标识不外泄」），
-而绑定需要 `SandboxId` + `SandboxMagic`。
+早期 L2 的 `all_sandbox_list` 解析**刻意不导出 `magic`**（「内部标识不外泄」），
+而绑定需要 `SandboxId` + `SandboxMagic`。L2 退役后这个结论更直接：
 
-所以绑定应该在**默认域里直接从客户端取完整的 `SandboxInfo`** ——
-那里 id 和 magic 都是现成的，不需要 L2 中转，也不需要我拼装身份。
+绑定在**默认域里直接从客户端取完整的 `SandboxInfo`** ——
+那里 id 和 magic 都是现成的，不需要本地库中转，也不需要我拼装身份。
 这反而更安全：身份完全来自客户端自己的对象。
 
 ### ⛔ OS 层：这些方法绝对不能暴露
@@ -547,9 +530,8 @@ L3 唯一可能丢数据的地方是「把本地目录绑到云端沙箱」，�
 ### 绑定的完整链路（已实现）
 
 ```
-L2  nutstore_l3_bind_candidates
-    读 all_sandbox_list，筛出「云端有、本地未绑定」的，给出 id / magic / pathPerms
-      ↓  （调用方把这三个值传给插件工具）
+调用方提供 sandboxId / magic / pathPerms（早期由 L2 的 bind_candidates 发现；L2 已退役）
+      ↓
 插件 nutstore_l3_create_sync_folder
     WriteGuards 判定 → 解锁令牌 + confirm + dryRun + 空目录 + 不重叠 + NotSynced
       ↓
@@ -567,8 +549,8 @@ L2  nutstore_l3_bind_candidates
 
 ### 还缺什么
 
-**一个可绑定的目标。** 实测当前云端文件夹全部已绑定，
-`nutstore_l3_bind_candidates` 返回 0 个。
+**一个可绑定的目标。** 实测当前云端文件夹全部已绑定；
+L2 退役后不再有 `nutstore_l3_bind_candidates`，需要人工从客户端或云端确认候选。
 
 要端到端验证，需要先有一个「云端有、本地没有」的文件夹。
 最安全的做法是建一个**全新的空文件夹**配一个**空的本地目录** ——
@@ -709,7 +691,6 @@ CommonServiceLocator.ServiceLocator.Current        // 静态属性
 | 私有 API 随版本变更 | L3-A 失效 | 同上；把接口访问集中在单一模块 |
 | 同步根凭据被 AI 读取 | 严重 | 白名单 + 只读默认 |
 | 抓包触及账号凭据 | 严重 | 抓包产物不落盘共享、用完即删 |
-| WebDAV 配额耗尽 | 功能不可用 | 限流器 + 禁止递归扫描 |
 | L3 绑定非空本地目录 → 冲突覆盖 | **严重（用户数据）** | 非空一律拒绝 + 默认 dryRun + 默认无写权限 |
 | L3 解绑/迁移同步根 | **严重（用户数据）** | **不实现、不暴露** |
 | 插件子域崩溃波及客户端同步 | 中 | AppDomain 隔离；插件所有入口包异常；失败即静默停用 |

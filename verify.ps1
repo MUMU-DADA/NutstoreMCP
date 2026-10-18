@@ -5,7 +5,7 @@
 .DESCRIPTION
     存在的理由：仓库里有两套测试，跑的地方不一样。
 
-      · tests/NutstoreMcp.Tests  —— dotnet test，net10，覆盖 WebDAV / 本地数据 / L3 安全逻辑
+      · tests/NutstoreMcp.Tests  —— dotnet test，net10，覆盖 L3 安全逻辑
       · recon/UiHookProbe        —— 独立 exe，net48 + WPF，覆盖控件树遍历 + L3 守卫
 
     探针**不在解决方案里**（它要 net48 + WPF，主套件跑不了），所以
@@ -43,7 +43,6 @@ function Bad($text) { Write-Host "   ❌ $text" -ForegroundColor Red }
 # assets 缺失（例如新克隆）时确实需要联网 restore，那种情况单独报出来，不当成构建失败。
 Step '编译（逐项目）'
 $projects = @(
-    'src\NutstoreMcp\NutstoreMcp.csproj'
     'src\NutstoreMcp.Plugin.Contract\NutstoreMcp.Plugin.Contract.csproj'
     'src\NutstoreMcp.Plugin\NutstoreMcp.Plugin.csproj'
     'src\NutstoreMcp.UiHook\NutstoreMcp.UiHook.csproj'

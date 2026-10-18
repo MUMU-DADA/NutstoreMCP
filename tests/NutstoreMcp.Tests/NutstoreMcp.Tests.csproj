@@ -21,15 +21,6 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\..\src\NutstoreMcp\NutstoreMcp.csproj" />
-  </ItemGroup>
-
-  <!-- mock WebDAV 服务器用 Kestrel 起真实 HTTP，所以测试工程需要 ASP.NET 框架引用 -->
-  <ItemGroup>
-    <FrameworkReference Include="Microsoft.AspNetCore.App" />
-  </ItemGroup>
-
-  <ItemGroup>
     <Using Include="Xunit" />
   </ItemGroup>
 
@@ -50,6 +41,7 @@
     <Compile Include="..\..\src\NutstoreMcp.Plugin\L3\LocalReadPolicy.cs" Link="L3\LocalReadPolicy.cs" />
     <Compile Include="..\..\src\NutstoreMcp.Plugin\L3\RemoteEventCodec.cs" Link="L3\RemoteEventCodec.cs" />
     <Compile Include="..\..\src\NutstoreMcp.Plugin\L3\CloudContentCodec.cs" Link="L3\CloudContentCodec.cs" />
+    <Compile Include="..\..\src\NutstoreMcp.ClientBindings\ClientSymbols.cs" Link="ClientBindings\ClientSymbols.cs" />
   </ItemGroup>
 
 </Project>

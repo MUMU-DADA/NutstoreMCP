@@ -1,9 +1,4 @@
 <Solution>
-  <!-- 独立进程：.NET 10，走 WebDAV + 本地只读库 -->
-  <Folder Name="/src/独立服务器/">
-    <Project Path="src/NutstoreMcp/NutstoreMcp.csproj" />
-  </Folder>
-
   <!-- 进程内：.NET Framework 4.8，跑在坚果云客户端里 -->
   <Folder Name="/src/插件/">
     <Project Path="src/NutstoreMcp.Plugin.Contract/NutstoreMcp.Plugin.Contract.csproj" />

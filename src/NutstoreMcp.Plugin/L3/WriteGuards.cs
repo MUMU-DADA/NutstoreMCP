@@ -115,7 +115,7 @@ public static class WriteGuards
             refusals.Add(
                 "没有指定要绑定的云端沙箱（sandboxId 必须为正数）。"
                 + "本操作只把**已存在**的云端文件夹绑到本地，不在云端新建任何东西 —— "
-                + "先用 nutstore_sync_folders 拿到未绑定的沙箱及其 ID。");
+                + "请先从云端沙箱列表确认未绑定的沙箱及其 ID（本地只读的 L2 发现工具已随独立服务器退役）。");
         }
 
         // fail-closed：状态必须被**明确证明**是 NotSynced。
@@ -124,7 +124,7 @@ public static class WriteGuards
         {
             refusals.Add(
                 "没有提供沙箱的同步状态，无法确认它尚未绑定。"
-                + "必须显式传 sandboxSyncState=NotSynced（值来自 nutstore_sync_folders）。");
+                + "必须显式传 sandboxSyncState=NotSynced（从云端沙箱列表确认，不能凭猜测填）。");
         }
         else if (!string.Equals(r.SandboxSyncState, "NotSynced", StringComparison.OrdinalIgnoreCase))
         {
