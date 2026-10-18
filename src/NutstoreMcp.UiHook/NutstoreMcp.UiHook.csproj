@@ -30,5 +30,6 @@
   <ItemGroup>
     <Compile Include="..\NutstoreMcp.ClientBindings\ClientSymbols.cs" Link="ClientBindings\ClientSymbols.cs" />
     <Compile Include="..\NutstoreMcp.Plugin\L3\RemoteEventCodec.cs" Link="L3\RemoteEventCodec.cs" />
+    <Compile Include="..\NutstoreMcp.Plugin\L3\CloudContentCodec.cs" Link="L3\CloudContentCodec.cs" />
   </ItemGroup>
 </Project>

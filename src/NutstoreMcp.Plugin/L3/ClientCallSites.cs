@@ -170,10 +170,12 @@ internal static class ClientCallSites
         new(
             CloudOpsType,
             ClientSymbols.DownloadContent,
-            "下载云端文件内容（DownloadCloudFile）",
+            "下载云端文件内容（DownloadCloudFile / ReadCloudFileInline）",
             Mutates: true,
-            Why: "云端只读，但**会写本地磁盘** —— 所以标为会改状态。"
-               + "本地写入由钩子用 FileMode.CreateNew 完成 —— 目标已存在就拒绝，绝不覆盖。"
+            Why: "云端只读，但**下载工具会写本地磁盘** —— 所以整体标为会改状态。"
+               + "下载路径的本地写入由钩子用 FileMode.CreateNew 完成 —— 目标已存在就拒绝，绝不覆盖；"
+               + "内联读取路径（ReadCloudFileInline）只把同一 GET 流读进内存，不写任何本地文件，"
+               + "整文件读取再按对象详情的云端 hash 校验。"
                + "实测 remoteVersion 必须是真实版本号（传 0 报 ObjectNotFound、传 -1 报 IllegalArgument），"
                + "所以调用前先查对象详情拿版本。"),
 

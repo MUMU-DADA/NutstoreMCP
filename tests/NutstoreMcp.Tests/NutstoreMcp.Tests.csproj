@@ -49,6 +49,7 @@
     <Compile Include="..\..\src\NutstoreMcp.Plugin\L3\CloudWriteOperations.cs" Link="L3\CloudWriteOperations.cs" />
     <Compile Include="..\..\src\NutstoreMcp.Plugin\L3\LocalReadPolicy.cs" Link="L3\LocalReadPolicy.cs" />
     <Compile Include="..\..\src\NutstoreMcp.Plugin\L3\RemoteEventCodec.cs" Link="L3\RemoteEventCodec.cs" />
+    <Compile Include="..\..\src\NutstoreMcp.Plugin\L3\CloudContentCodec.cs" Link="L3\CloudContentCodec.cs" />
   </ItemGroup>
 
 </Project>

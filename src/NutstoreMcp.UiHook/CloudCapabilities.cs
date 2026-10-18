@@ -1,5 +1,6 @@
 // 执行云端目录创建与权限查询。
 using NutstoreMcp.ClientBindings;
+using NutstoreMcp.Plugin.L3;
 using System.Collections;
 using System.Globalization;
 using System.Reflection;
@@ -311,17 +312,7 @@ public sealed partial class UiHook
     }
 
     /// <summary>客户端的分块云端 hash：4 MiB 一块，单块时即 SHA256(SHA256(内容) || BE64(长度))。</summary>
-    private static string CapabilityCloudHash(byte[] bytes)
-    {
-        using var sha = System.Security.Cryptography.SHA256.Create();
-        var digest = sha.ComputeHash(bytes);
-        var record = new byte[40];
-        Buffer.BlockCopy(digest, 0, record, 0, digest.Length);
-        var length = BitConverter.GetBytes((long)bytes.Length);
-        if (BitConverter.IsLittleEndian) Array.Reverse(length);
-        Buffer.BlockCopy(length, 0, record, 32, 8);
-        return Convert.ToBase64String(sha.ComputeHash(record));
-    }
+    private static string CapabilityCloudHash(byte[] bytes) => CloudContentCodec.CloudHash(bytes);
 
     /// <summary>传输 MD5 用客户端自己的编码 helper，避免猜 URL-safe Base64 的 padding 规则。</summary>
     private static string CapabilityUrlSafeMd5(byte[] bytes)

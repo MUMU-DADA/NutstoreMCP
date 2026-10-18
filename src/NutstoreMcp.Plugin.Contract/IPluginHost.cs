@@ -231,4 +231,17 @@ public interface IUiHook
 
     /// <summary>读取云端路径的权限与继承状态。</summary>
     string ReadPathAcl(long sandboxId, long magic, string localRoot, string cloudPath);
+
+    /// <summary>
+    /// 在默认域里直接读取云端文件内容并返回，**不写本地文件**。
+    /// </summary>
+    /// <remarks>
+    /// 只读：发一次 GET 把内容读进内存，目标必须是普通文件。
+    /// <paramref name="offset"/> / <paramref name="length"/> 是字节区间；
+    /// <paramref name="length"/> 传 0 表示从 offset 读到上限或文件末尾。
+    /// 钩子会再次限制单次读取大小，避免跨域返回过大或调用方绕过限制。
+    /// 整文件读取时按对象详情的云端 hash 校验内容；分段读取只返回本段摘要。
+    /// </remarks>
+    string ReadCloudFileInline(
+        long sandboxId, long magic, string localRoot, string cloudPath, long offset, long length);
 }

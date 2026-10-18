@@ -6,6 +6,7 @@ using System.Globalization;
 using System.Text.Json;
 using ModelContextProtocol.Server;
 using NutstoreMcp.Plugin.Contract;
+using NutstoreMcp.Plugin.L3;
 
 namespace NutstoreMcp.Plugin;
 
@@ -1023,6 +1024,63 @@ public sealed partial class PluginTools
                 reason = $"{ex.GetType().Name}: {ex.Message}",
                 note = "钩子没有 ReadRemoteEventsPage —— 需要重启客户端让新钩子生效。",
             }, Indented);
+        }
+    }
+
+    [McpServerTool(Name = "nutstore_l3_read_file", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = true)]
+    [Description("只读读取云端文件内容，直接返回文本或 base64 —— **不写本地文件、不改云端**，不需要解锁令牌。单次最多 256 KiB；更大的文件用 offset/length 分段读，边界可能切开多字节字符，此时会给 base64。整文件读取会用对象详情的云端 hash 校验（integrity=verified）；分段读取只返回本段 SHA-256。严格 UTF-8 才给 text，否则给 contentBase64，不会同时返回两份。")]
+    public static string L3ReadFile(
+        [Description("沙箱 ID")] long sandboxId,
+        [Description("沙箱的内部标识（magic）")] long magic,
+        [Description("云端文件路径，必须以 / 开头")] string cloudPath,
+        [Description("起始字节偏移，默认 0")] long offset = 0,
+        [Description("最多读取的字节数；0 表示读到 256 KiB 上限或文件末尾")] long length = 0)
+    {
+        var ui = PluginEntry.Ui;
+        if (ui is null) return UiUnavailable;
+
+        try
+        {
+            var pathError = CloudObjectPath.Validate(cloudPath, allowRoot: false);
+            if (pathError is not null)
+                return JsonSerializer.Serialize(new { ok = false, reason = pathError }, Indented);
+
+            if (offset < 0)
+                return JsonSerializer.Serialize(new { ok = false, reason = "offset 不能为负数" }, Indented);
+
+            if (length < 0)
+                return JsonSerializer.Serialize(new { ok = false, reason = "length 不能为负数" }, Indented);
+
+            // 钩子会再挡一次（纵深防御）；这里先给调用方清楚的错误。
+            if (length > CloudContentCodec.MaxInlineReadBytes)
+                return JsonSerializer.Serialize(new
+                {
+                    ok = false,
+                    reason = "单次读取不能超过 256 KiB，请用 offset/length 分段。",
+                }, Indented);
+
+            var root = BoundRoot(ui.ReadClientSyncFolders(), sandboxId, magic);
+            if (root is null)
+                return JsonSerializer.Serialize(new
+                {
+                    ok = false,
+                    reason = "沙箱身份或真实本地绑定无法确认。",
+                }, Indented);
+
+            return ui.ReadCloudFileInline(sandboxId, magic, root, cloudPath, offset, length);
+        }
+        catch (Exception ex) when (ex is MissingMethodException or TypeLoadException)
+        {
+            return JsonSerializer.Serialize(new
+            {
+                ok = false,
+                reason = $"{ex.GetType().Name}: {ex.Message}",
+                note = "钩子没有 ReadCloudFileInline —— 需要一次重启装上（契约变更）。",
+            }, Indented);
+        }
+        catch (Exception ex)
+        {
+            return Error(ex);
         }
     }
 
