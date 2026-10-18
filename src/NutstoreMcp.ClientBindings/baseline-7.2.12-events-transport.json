@@ -2538,6 +2538,54 @@
       ]
     },
     {
+      "key": "UploadBlock",
+      "assemblyFile": "NutstoreClient.Legacy.dll",
+      "typeName": "A.c3795a089d76f103f11c4fe70f38ac8ca",
+      "memberName": "c4a3b6ee87abac876ea41a1d721cb8f1f",
+      "kind": "method",
+      "purpose": "上传单个 4 MiB 内容块（大文件分块上传）",
+      "effect": "write",
+      "typeAttributes": "BeforeFieldInit",
+      "baseType": "[mscorlib]System.Object",
+      "members": [
+        {
+          "name": "c4a3b6ee87abac876ea41a1d721cb8f1f",
+          "kind": "method",
+          "signature": "Default;instance=False;explicitThis=False;generic=0;required=4;System.Void(class [mscorlib]System.IO.Stream,System.Int64,System.String,valuetype [NutstoreClient.Legacy]NutstoreClient.Connection.CompressionMethod);parameters=[{\"index\":1,\"attributes\":\"None\",\"constantType\":null,\"value\":null},{\"index\":2,\"attributes\":\"None\",\"constantType\":null,\"value\":null},{\"index\":3,\"attributes\":\"None\",\"constantType\":null,\"value\":null},{\"index\":4,\"attributes\":\"None\",\"constantType\":null,\"value\":null}]",
+          "attributes": "Public, Static, HideBySig",
+          "implementationAttributes": "IL",
+          "ilSha256": "62579C843B92E4BF35E49D851E80D0694E2518A1C48243674571B95F83B3CDF8",
+          "bodyStructureSha256": "53E50436E28E4E69EDCB7F7AAB7279829DCD83603FEAF1DB9A3679D2BBFCF45D",
+          "constantType": null,
+          "constantValue": null
+        }
+      ]
+    },
+    {
+      "key": "UploadBlockList",
+      "assemblyFile": "NutstoreClient.Legacy.dll",
+      "typeName": "A.c3795a089d76f103f11c4fe70f38ac8ca",
+      "memberName": "ca34e3c9186d3d82a9b7e8f0d2ef38961",
+      "kind": "method",
+      "purpose": "发布块列表（大文件分块上传）",
+      "effect": "write",
+      "typeAttributes": "BeforeFieldInit",
+      "baseType": "[mscorlib]System.Object",
+      "members": [
+        {
+          "name": "ca34e3c9186d3d82a9b7e8f0d2ef38961",
+          "kind": "method",
+          "signature": "Default;instance=False;explicitThis=False;generic=0;required=2;System.Void(System.String,System.String);parameters=[{\"index\":1,\"attributes\":\"None\",\"constantType\":null,\"value\":null},{\"index\":2,\"attributes\":\"None\",\"constantType\":null,\"value\":null}]",
+          "attributes": "Public, Static, HideBySig",
+          "implementationAttributes": "IL",
+          "ilSha256": "B3B772D5989F41980E74F6501C3402E338514B1D43A146BEB17081920BB1996C",
+          "bodyStructureSha256": "9FDD1B4407FD5EC2232E0337340047286029857FFADEAB3971688084F880D2FA",
+          "constantType": null,
+          "constantValue": null
+        }
+      ]
+    },
+    {
       "key": "UploadDeltaContent",
       "assemblyFile": "NutstoreClient.Legacy.dll",
       "typeName": "A.c3795a089d76f103f11c4fe70f38ac8ca",

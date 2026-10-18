@@ -229,6 +229,20 @@ public interface IUiHook
     /// </remarks>
     string CreateCloudFile(long sandboxId, long magic, string localRoot, string cloudPath, string base64Content);
 
+    /// <summary>
+    /// 从本地文件上传内容并发布成云端新文件；小文件走全量上传，大文件走客户端分块上传。
+    /// </summary>
+    /// <remarks>
+    /// **会改云端**：内容来自默认域进程可读的本地文件流，先上传内容（超过客户端
+    /// 393216 字节阈值时逐 4 MiB 块上传并发布块列表），再用 <c>CreateFileParam</c>
+    /// 发布元数据。内容上限由默认域钩子再次校验（16 MiB）。
+    /// <c>cf02</c> 本体没有查重与 noReplace，**防覆写完全依赖调用方**：
+    /// 只能用于已确认为空、且由本次调用新建的新目录里，本方法自身不做覆盖判断。
+    /// 返回里区分「内容已上传」和「元数据已提交」，两者之间失败时内容会留在云端。
+    /// </remarks>
+    string CreateCloudFileFromLocalFile(
+        long sandboxId, long magic, string localRoot, string cloudPath, string localFilePath, long expectedSize);
+
     /// <summary>读取云端路径的权限与继承状态。</summary>
     string ReadPathAcl(long sandboxId, long magic, string localRoot, string cloudPath);
 

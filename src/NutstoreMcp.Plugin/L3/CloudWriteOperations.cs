@@ -72,10 +72,14 @@ public static class CloudWriteOperations
     }
 
     /// <summary>
-    /// 首轮支持的内容上限（256 KiB）。
-    /// 客户端 393216 字节以下才走全量上传、4 MiB 才分块算云端 hash，所以这个范围内
-    /// 「全量上传 + 单块 hash」两条路径都已在真实对象上核对过。
+    /// 内联 base64 内容的上限（256 KiB）。本地文件来源不受这个限制：
+    /// 它走 <c>CreateCloudFileFromLocalFile</c>，上限是
+    /// <see cref="CloudContentCodec.MaxFileUploadBytes"/>（16 MiB）。
     /// </summary>
+    /// <remarks>
+    /// 256 KiB 与单次内联读取上限一致；客户端在 393216 字节以下走全量上传、
+    /// 4 MiB 才分块算云端 hash，所以内联范围内「全量上传 + 单块 hash」两条路径都已核对过。
+    /// </remarks>
     public const int MaxContentBytes = 262144;
 
     /// <summary>上界对应的 base64 长度（含 padding）。</summary>
@@ -105,7 +109,7 @@ public static class CloudWriteOperations
         string directoryName, string fileName, int contentLength,
         Func<string> bindings, Func<string, string> listDirectory, Func<string, string> readDetail,
         Func<string> executeCreateDirectory, Func<string> executeCreateFile,
-        string? contentSource = null)
+        string? contentSource = null, int maxContentBytes = MaxContentBytes)
     {
         var directory = "/" + directoryName;
         var target = directory + "/" + fileName;
@@ -119,8 +123,8 @@ public static class CloudWriteOperations
         Add(state.Refusals, ValidateSegment(fileName, "文件名"));
         if (contentLength <= 0)
             state.Refusals.Add("内容为空；空文件在客户端走另一条分支（跳过上传、块列表用 40 个零字节），首轮不支持。");
-        if (contentLength > MaxContentBytes)
-            state.Refusals.Add("首轮只支持不超过 " + MaxContentBytes + " 字节的内容。");
+        if (contentLength > maxContentBytes)
+            state.Refusals.Add("内容超过 " + maxContentBytes + " 字节上限。");
 
         if (state.Refusals.Count == 0)
         {

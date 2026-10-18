@@ -241,6 +241,223 @@ public sealed partial class UiHook
             ("reason", ok ? null : "已尝试发布，但没有同时确认调用成功与云端文件结果；只做只读复查，不重试、不回滚。"));
     }
 
+    /// <summary>
+    /// 从本地文件上传并发布为云端新文件。小文件走客户端全量上传，超过
+    /// <see cref="CloudContentCodec.FullUploadThresholdBytes"/> 走分块上传。
+    /// </summary>
+    /// <remarks>
+    /// 分块协议已在真实沙箱上逐字节核对过（单块 400 KiB、两块 4.3 MiB）：
+    /// 块上传的 name 用 URL-safe Base64(块记录)，块列表的 name 用 URL-safe Base64(文件记录)，
+    /// 块列表体是各块 URL-safe Base64(块记录) + CRLF；元数据里 hashBase64 用普通
+    /// Base64(文件摘要)，blockListNameBase64 用普通 Base64(文件记录)。
+    /// 空文件与超过 <see cref="CloudContentCodec.MaxFileUploadBytes"/> 的文件拒绝。
+    /// 目标存在性仍由调用方保证：本方法只做一次纵深防御检查，不做覆盖与回滚。
+    /// </remarks>
+    public string CreateCloudFileFromLocalFile(long sandboxId, long magic, string localRoot, string cloudPath,
+        string localFilePath, long expectedSize)
+    {
+        var attempted = false;
+        var contentUploaded = false;
+        var metadataAttempted = false;
+        long? submittedVersion = null;
+        string? cloudHash = null;
+        var size = 0L;
+        object? box = null;
+        object? path = null;
+        object? parent = null;
+        MethodInfo? readDetail = null;
+        MethodInfo? listDirectory = null;
+
+        try
+        {
+            var validation = CapabilityCheckArguments(sandboxId, magic, localRoot, cloudPath, allowRoot: false);
+            if (validation is not null)
+                return CapabilityCreateFailure(cloudPath, validation, attempted, contentUploaded, metadataAttempted);
+
+            if (expectedSize <= 0)
+                return CapabilityCreateFailure(cloudPath, "空文件走另一条客户端分支，暂不支持",
+                    attempted, contentUploaded, metadataAttempted);
+            if (expectedSize > CloudContentCodec.MaxFileUploadBytes)
+                return CapabilityCreateFailure(cloudPath,
+                    "本地文件超过 " + CloudContentCodec.MaxFileUploadBytes + " 字节上限",
+                    attempted, contentUploaded, metadataAttempted);
+            if (string.IsNullOrWhiteSpace(localFilePath) || !Path.IsPathRooted(localFilePath))
+                return CapabilityCreateFailure(cloudPath, "本地文件路径必须是完整绝对路径",
+                    attempted, contentUploaded, metadataAttempted);
+
+            string fullPath;
+            try
+            {
+                fullPath = Path.GetFullPath(localFilePath);
+            }
+            catch (Exception ex)
+            {
+                return CapabilityCreateFailure(cloudPath, "本地文件路径不合法：" + ex.GetType().Name,
+                    attempted, contentUploaded, metadataAttempted);
+            }
+
+            FileAttributes attributes;
+            try
+            {
+                attributes = File.GetAttributes(fullPath);
+            }
+            catch (Exception ex)
+            {
+                return CapabilityCreateFailure(cloudPath, "读不到本地文件信息：" + ex.GetType().Name,
+                    attempted, contentUploaded, metadataAttempted);
+            }
+
+            if ((attributes & FileAttributes.Directory) != 0)
+                return CapabilityCreateFailure(cloudPath, "本地路径是目录，不是文件",
+                    attempted, contentUploaded, metadataAttempted);
+            if ((attributes & FileAttributes.ReparsePoint) != 0)
+                return CapabilityCreateFailure(cloudPath, "本地文件是符号链接或目录联接，拒绝上传",
+                    attempted, contentUploaded, metadataAttempted);
+
+            var info = new FileInfo(fullPath);
+            if (!info.Exists)
+                return CapabilityCreateFailure(cloudPath, "本地文件不存在",
+                    attempted, contentUploaded, metadataAttempted);
+            if (info.Length != expectedSize)
+                return CapabilityCreateFailure(cloudPath,
+                    "本地文件长度在预检后发生变化（期望 " + expectedSize + "，实际 " + info.Length + "）",
+                    attempted, contentUploaded, metadataAttempted);
+
+            size = expectedSize;
+
+            var api = FindClientType(CloudOpsTypeName)
+                ?? throw new CapabilityFailureException("找不到云端操作层");
+            box = BuildNSSandbox(sandboxId, magic, localRoot, out var boxError)
+                ?? throw new CapabilityFailureException(boxError);
+            path = CapabilityBuildPath(box, cloudPath);
+            var slash = cloudPath.LastIndexOf('/');
+            var parentPath = slash == 0 ? "/" : cloudPath.Substring(0, slash);
+            parent = CapabilityBuildPath(box, parentPath);
+
+            readDetail = CapabilityMethod(api, ClientSymbols.ReadObjectDetail, box.GetType(), path.GetType());
+            listDirectory = CapabilityMethod(api, ClientSymbols.ListDirectory, path.GetType(), typeof(string));
+
+            // 纵深防御：父目录必须是有效目录，目标必须不存在（含大小写别名）。
+            var parentDetail = readDetail.Invoke(null, new[] { box, parent });
+            if (parentDetail is null || CapabilityDeleted(parentDetail) || !CapabilityIsDirectory(parentDetail)
+                || !string.Equals(CapabilityBeanPath(parentDetail), parentPath, StringComparison.Ordinal))
+                return CapabilityCreateFailure(cloudPath, "父目录不存在或不是有效目录",
+                    attempted, contentUploaded, metadataAttempted);
+            if (CapabilityDirectoryPaths(listDirectory, parent)
+                .Any(p => string.Equals(p, cloudPath, StringComparison.OrdinalIgnoreCase)))
+                return CapabilityCreateFailure(cloudPath, "目标已存在（含大小写别名），拒绝发布。",
+                    attempted, contentUploaded, metadataAttempted);
+
+            var identifierType = FindClientType(ClientSymbols.SandboxIdentifierType)
+                ?? throw new CapabilityFailureException("找不到 SandboxIdentifier");
+            var compressionType = FindClientType(ClientSymbols.CompressionMethodType)
+                ?? throw new CapabilityFailureException("找不到 CompressionMethod");
+            var paramType = FindClientType(ClientSymbols.CreateFileParamType)
+                ?? throw new CapabilityFailureException("找不到 CreateFileParam");
+            var create = CapabilityMethod(api, ClientSymbols.CreateFileMetadata, paramType);
+
+            string? fullObjectName = null;
+            string? blockListName = null;
+
+            // 记录、MD5 与上传字节必须来自**同一个只读句柄**：分两次打开文件时，
+            // 「算完 hash、上传前文件被改动」会让云端 hash 与实际内容不一致。
+            using (var stream = new FileStream(fullPath, FileMode.Open, FileAccess.Read, FileShare.Read))
+            {
+                var record = CloudContentCodec.ComputeFileRecord(stream);
+                if (record.Size != size)
+                    return CapabilityCreateFailure(cloudPath, "本地文件记录长度与预检不一致",
+                        attempted, contentUploaded, metadataAttempted);
+                cloudHash = record.HashBase64;
+
+                var identifier = Activator.CreateInstance(identifierType, sandboxId, magic)
+                    ?? throw new CapabilityFailureException("SandboxIdentifier 构造失败");
+                var compression = Enum.Parse(compressionType, "NONE");
+                attempted = true;
+
+                if (size <= CloudContentCodec.FullUploadThresholdBytes)
+                {
+                    // 小文件：客户端全量上传。MD5 用客户端自己的编码 helper，避免猜 URL-safe 规则。
+                    stream.Position = 0;
+                    var md5 = CapabilityUrlSafeMd5FromStream(stream);
+                    var upload = CapabilityMethod(api, ClientSymbols.UploadFullContent,
+                        identifierType, typeof(Stream), typeof(long), typeof(long), compressionType, typeof(string));
+                    stream.Position = 0;
+                    var uploaded = upload.Invoke(null,
+                        new[] { identifier, (object)stream, (object)size, (object)size, compression, md5 });
+
+                    fullObjectName = uploaded as string;
+                    if (string.IsNullOrWhiteSpace(fullObjectName))
+                        throw new CapabilityFailureException("全量上传没有返回内容对象标识");
+                }
+                else
+                {
+                    // 大文件：逐块上传 + 块列表，最后用块列表名发布元数据。
+                    var uploadBlock = CapabilityMethod(api, ClientSymbols.UploadBlock,
+                        typeof(Stream), typeof(long), typeof(string), compressionType);
+                    var uploadBlockList = CapabilityMethod(api, ClientSymbols.UploadBlockList,
+                        typeof(string), typeof(string));
+
+                    foreach (var block in record.Blocks)
+                    {
+                        stream.Position = block.Offset;
+                        uploadBlock.Invoke(null, new object[]
+                        {
+                            stream, (long)block.Length, CloudContentCodec.ToUrlSafeBase64(block.Record), compression,
+                        });
+                    }
+
+                    uploadBlockList.Invoke(null, new object[] { record.BlockListBody, record.UrlSafeBlockListName });
+                    blockListName = record.BlockListNameBase64;
+                }
+            }
+
+            contentUploaded = true;
+
+            var param = Activator.CreateInstance(paramType)
+                ?? throw new CapabilityFailureException("CreateFileParam 构造失败");
+            CapabilitySetMember(param, "path", path);
+            CapabilitySetMember(param, "size", size);
+            CapabilitySetMember(param, "hashBase64", cloudHash);
+            CapabilitySetMember(param, "fullObjectNameBase64", fullObjectName);
+            CapabilitySetMember(param, "blockListNameBase64", blockListName);
+            CapabilitySetMember(param, "compressible", false);
+            CapabilitySetMember(param, "exAttr", null);
+
+            metadataAttempted = true;
+            var result = create.Invoke(null, new[] { param })
+                ?? throw new CapabilityFailureException("发布方法返回 null");
+            var version = CapabilityLong(CapabilityMember(result, "version"));
+            if (version <= 0) throw new CapabilityFailureException("发布结果没有有效版本号");
+            var resultPath = CapabilityMember(result, "path");
+            if (resultPath is null || !string.Equals(CapabilityPathText(resultPath), cloudPath, StringComparison.Ordinal))
+                throw new CapabilityFailureException("发布结果路径与请求不一致");
+            submittedVersion = version;
+        }
+        catch (Exception ex)
+        {
+            return CapabilityCreateFailure(cloudPath, "创建文件失败：" + CapabilityError(ex),
+                attempted, contentUploaded, metadataAttempted);
+        }
+
+        // 写后只读复查（默认域这一侧）；插件还会再复查一次。
+        var verification = CapabilityVerifyFile(readDetail!, listDirectory!, box!, path!, parent!,
+            cloudPath, size, cloudHash, submittedVersion);
+        var ok = verification.Ok;
+        return Json.Obj(
+            ("ok", ok),
+            ("attempted", attempted),
+            ("contentUploaded", contentUploaded),
+            ("metadataAttempted", metadataAttempted),
+            ("metadataSubmitted", submittedVersion is not null),
+            ("cloudPath", cloudPath),
+            ("size", size),
+            ("cloudHash", cloudHash),
+            ("version", submittedVersion),
+            ("verification", new Json.Raw(verification.Json)),
+            ("outcome", ok ? "created" : "unknown"),
+            ("reason", ok ? null : "已尝试发布，但没有同时确认调用成功与云端文件结果；只做只读复查，不重试、不回滚。"));
+    }
+
     private static string CapabilityCreateFailure(string cloudPath, string reason, bool attempted,
         bool contentUploaded, bool metadataAttempted)
         => Json.Obj(("ok", false), ("attempted", attempted),
@@ -323,6 +540,20 @@ public sealed partial class UiHook
             ?? throw new CapabilityFailureException("找不到 StringUtils");
         var digest = CapabilityMethod(hashType, "GetMd5Digest", typeof(Stream)).Invoke(null, new object[] { new MemoryStream(bytes, writable: false) })
             ?? throw new CapabilityFailureException("MD5 计算返回 null");
+        return CapabilityMethod(stringUtils, "BytesToURLSafeBase64String", typeof(byte[]))
+            .Invoke(null, new[] { digest }) as string
+            ?? throw new CapabilityFailureException("MD5 编码返回 null");
+    }
+
+    /// <summary>在给定只读流上计算传输 MD5（客户端自己的 hash helper + URL-safe 编码）。</summary>
+    private static string CapabilityUrlSafeMd5FromStream(Stream stream)
+    {
+        var hashType = FindClientType(ClientSymbols.HashAlgorithmsType)
+            ?? throw new CapabilityFailureException("找不到 HashAlgorithms");
+        var stringUtils = FindClientType(ClientSymbols.StringUtilsType)
+            ?? throw new CapabilityFailureException("找不到 StringUtils");
+        var digest = CapabilityMethod(hashType, "GetMd5Digest", typeof(Stream)).Invoke(null, new object[] { stream });
+        if (digest is null) throw new CapabilityFailureException("MD5 计算返回 null");
         return CapabilityMethod(stringUtils, "BytesToURLSafeBase64String", typeof(byte[]))
             .Invoke(null, new[] { digest }) as string
             ?? throw new CapabilityFailureException("MD5 编码返回 null");

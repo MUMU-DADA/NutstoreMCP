@@ -110,4 +110,90 @@ public class CloudContentCodecTests
     {
         Assert.Throws<ArgumentException>(() => CloudContentCodec.CloudHash([]));
     }
+
+    [Fact]
+    public void 单块文件记录同时给出块名与块列表()
+    {
+        var bytes = Encoding.UTF8.GetBytes("hello");
+        using var stream = new MemoryStream(bytes);
+
+        var file = CloudContentCodec.ComputeFileRecord(stream);
+
+        Assert.Equal(5, file.Size);
+        Assert.Single(file.Blocks);
+        Assert.Equal(0, file.Blocks[0].Offset);
+        Assert.Equal(5, file.Blocks[0].Length);
+        Assert.Equal(40, file.Blocks[0].Record.Length);
+
+        // 文件摘要 = SHA256(块记录)；单块时它就是 CloudHash 的摘要部分。
+        Assert.Equal(CloudContentCodec.CloudHash(bytes), file.HashBase64);
+
+        // 块列表体 = URL-safe Base64(块记录) + CRLF；末尾也带一个 CRLF。
+        var expectedBody = CloudContentCodec.ToUrlSafeBase64(file.Blocks[0].Record) + "\r\n";
+        Assert.Equal(expectedBody, file.BlockListBody);
+        Assert.Contains("\r\n", file.BlockListBody);
+
+        // 块列表 name 用 URL-safe Base64(文件记录)，元数据里用普通 Base64。
+        Assert.Equal(CloudContentCodec.ToUrlSafeBase64(file.Record), file.UrlSafeBlockListName);
+        Assert.Equal(Convert.ToBase64String(file.Record), file.BlockListNameBase64);
+    }
+
+    [Fact]
+    public void 跨块文件记录按四MiB切块并带上文件总长度()
+    {
+        var bytes = new byte[CloudContentCodec.CloudHashBlockBytes + 3];
+        new Random(20261019).NextBytes(bytes);
+        using var stream = new MemoryStream(bytes);
+
+        var file = CloudContentCodec.ComputeFileRecord(stream);
+
+        Assert.Equal(bytes.Length, file.Size);
+        Assert.Equal(2, file.Blocks.Count);
+        Assert.Equal(CloudContentCodec.CloudHashBlockBytes, file.Blocks[0].Length);
+        Assert.Equal(3, file.Blocks[1].Length);
+        Assert.Equal(CloudContentCodec.CloudHashBlockBytes, file.Blocks[1].Offset);
+
+        // 独立重算一遍块记录与文件摘要，避免只验证「实现等于自己」。
+        using var sha = SHA256.Create();
+        using var records = new MemoryStream();
+        foreach (var (offset, length) in new[]
+                 {
+                     (0, CloudContentCodec.CloudHashBlockBytes),
+                     (CloudContentCodec.CloudHashBlockBytes, 3),
+                 })
+        {
+            var digest = sha.ComputeHash(bytes, offset, length);
+            records.Write(digest, 0, digest.Length);
+
+            var bigEndian = BitConverter.GetBytes((long)length);
+            if (BitConverter.IsLittleEndian)
+            {
+                Array.Reverse(bigEndian);
+            }
+
+            records.Write(bigEndian, 0, bigEndian.Length);
+        }
+
+        var expectedDigest = sha.ComputeHash(records.ToArray());
+        Assert.Equal(Convert.ToBase64String(expectedDigest), file.HashBase64);
+
+        var lines = file.BlockListBody.Split("\r\n", StringSplitOptions.RemoveEmptyEntries);
+        Assert.Equal(2, lines.Length);
+        Assert.Equal(CloudContentCodec.ToUrlSafeBase64(file.Blocks[0].Record), lines[0]);
+        Assert.Equal(CloudContentCodec.ToUrlSafeBase64(file.Blocks[1].Record), lines[1]);
+    }
+
+    [Fact]
+    public void URL安全Base64只换字符不丢padding()
+    {
+        // 0xFB 0xFF 的普通 Base64 是 "+/8="，正好覆盖 + 和 / 两个字符。
+        Assert.Equal("-_8=", CloudContentCodec.ToUrlSafeBase64([0xFB, 0xFF]));
+    }
+
+    [Fact]
+    public void 空流不能算出文件记录()
+    {
+        using var stream = new MemoryStream();
+        Assert.Throws<ArgumentException>(() => CloudContentCodec.ComputeFileRecord(stream));
+    }
 }

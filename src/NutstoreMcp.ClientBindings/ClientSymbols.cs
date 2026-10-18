@@ -61,6 +61,8 @@ internal static class ClientSymbols
     public const string ReadPathAcl = "c5c78b21a991a876d4bd8093b70f39202";
     public const string UploadFullContent = "c6e98b16ca153095711ef04f770d2ca53";
     public const string UploadDeltaContent = "cd20b0bb262184cd692f5b3bba1477f24";
+    public const string UploadBlock = "c4a3b6ee87abac876ea41a1d721cb8f1f";
+    public const string UploadBlockList = "ca34e3c9186d3d82a9b7e8f0d2ef38961";
     public const string CreateFileMetadata = "cf02e04aba958d38757ce778e8f94ae50";
 
     // 调查过的入口也参与升级检查；登记不代表允许执行。
@@ -103,6 +105,8 @@ internal static class ClientSymbols
         Entry(nameof(ReadPathAcl), ReadPathAcl, "路径权限查询", "read"),
         Entry(nameof(UploadFullContent), UploadFullContent, "上传全量内容；不等于创建文件", "write"),
         Entry(nameof(UploadDeltaContent), UploadDeltaContent, "增量内容上传；未开放", "write"),
+        Entry(nameof(UploadBlock), UploadBlock, "上传单个 4 MiB 内容块（大文件分块上传）", "write"),
+        Entry(nameof(UploadBlockList), UploadBlockList, "发布块列表（大文件分块上传）", "write"),
         Entry(nameof(CreateFileMetadata), CreateFileMetadata, "创建文件元数据；碰撞语义待在线核实", "write"),
         new ClientSymbol("CompressionMethodValues", CloudOpsAssembly, CompressionMethodType,
             "", "上传压缩枚举", "read", "enum"),

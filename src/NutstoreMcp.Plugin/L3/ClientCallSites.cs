@@ -69,12 +69,30 @@ internal static class ClientCallSites
         new(
             CloudOpsType,
             ClientSymbols.CreateFileMetadata,
-            "把已上传内容发布成云端文件（CreateCloudFile 的第二阶段）",
+            "把已上传内容发布成云端文件（CreateCloudFile / CreateCloudFileFromLocalFile 的第二阶段）",
             Mutates: true,
             Why: "**这是唯一真正落地文件的一步**：方法本体没有目标查重、没有 noReplace，"
                + "所以只允许在本次调用新建、且建后确认为空的目录里发布，"
                + "发布前后都按真实状态核对；目标存在或仅大小写冲突一律拒绝，"
                + "失败或结果未知只做只读复查，不重试、不回滚、不删除。"),
+
+        new(
+            CloudOpsType,
+            ClientSymbols.UploadBlock,
+            "上传单个 4 MiB 内容块（CreateCloudFileFromLocalFile 的大文件分支）",
+            Mutates: true,
+            Why: "块上传请求没有目标路径，只按「块记录 URL-safe Base64」把内容存进对象存储 —— "
+               + "块名由内容摘要与长度决定，不创建文件、不覆盖任何已有对象；"
+               + "只有随后块列表与元数据都成功，这些块才会被新文件引用。"),
+
+        new(
+            CloudOpsType,
+            ClientSymbols.UploadBlockList,
+            "发布块列表（CreateCloudFileFromLocalFile 的大文件分支）",
+            Mutates: true,
+            Why: "块列表请求只按「文件记录 URL-safe Base64」登记块清单，不创建文件、不覆盖对象；"
+               + "随后用同一文件记录的普通 Base64 发布元数据，失败时块和块列表只留在对象存储里，"
+               + "不会被任何文件引用，也不影响已有对象。"),
 
         new(
             CloudOpsType,

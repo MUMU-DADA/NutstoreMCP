@@ -13,6 +13,34 @@ public class CloudCreateOperationsTests
     private const string Root = "C:\\new-sync";
 
     [Fact]
+    public void 本地文件模式可以把内容上限提高到16MiB()
+    {
+        // 300000 字节超过内联 base64 的 256 KiB 上限，但低于全量上传阈值附近；
+        // 本地文件模式应能把上限提到 CloudContentCodec.MaxFileUploadBytes。
+        var cloud = new Fake();
+        using var result = cloud.Create(contentLength: 300000,
+            maxContentBytes: CloudContentCodec.MaxFileUploadBytes);
+
+        Assert.True(Flag(result, "allowed"));
+        Assert.True(Flag(result, "executed"));
+        Assert.Equal(300000, cloud.Objects["/dir/a.txt"].Size);
+        Assert.Equal(1, cloud.FileWrites);
+    }
+
+    [Fact]
+    public void 超出16MiB的本地文件仍被拒绝()
+    {
+        var cloud = new Fake();
+        using var result = cloud.Create(contentLength: CloudContentCodec.MaxFileUploadBytes + 1,
+            maxContentBytes: CloudContentCodec.MaxFileUploadBytes);
+
+        Assert.False(Flag(result, "allowed"));
+        Assert.Equal(0, cloud.FileWrites);
+        Assert.Contains(result.RootElement.GetProperty("refusals").EnumerateArray(),
+            error => error.GetString()!.Contains("上限"));
+    }
+
+    [Fact]
     public void 预演只读不写且probe显示预检通过()
     {
         var cloud = new Fake();
@@ -273,14 +301,16 @@ public class CloudCreateOperationsTests
 
         public JsonDocument Create(
             bool unlocked = true, bool confirm = true, bool dryRun = false,
-            string directory = "dir", string file = "a.txt", int contentLength = 12)
+            string directory = "dir", string file = "a.txt", int contentLength = 12,
+            int? maxContentBytes = null)
         {
             _directory = directory;
             _file = file;
             _contentLength = contentLength;
             return JsonDocument.Parse(CloudWriteOperations.CreateFile(
                 unlocked, confirm, dryRun, 7, 11, directory, file, contentLength,
-                Bindings, List, Detail, CreateDirectory, CreateFile));
+                Bindings, List, Detail, CreateDirectory, CreateFile,
+                maxContentBytes: maxContentBytes ?? CloudWriteOperations.MaxContentBytes));
         }
 
         private string Bindings()
