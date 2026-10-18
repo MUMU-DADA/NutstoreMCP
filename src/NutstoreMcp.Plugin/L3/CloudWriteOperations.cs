@@ -104,13 +104,15 @@ public static class CloudWriteOperations
         bool unlocked, bool confirm, bool dryRun, long id, long magic,
         string directoryName, string fileName, int contentLength,
         Func<string> bindings, Func<string, string> listDirectory, Func<string, string> readDetail,
-        Func<string> executeCreateDirectory, Func<string> executeCreateFile)
+        Func<string> executeCreateDirectory, Func<string> executeCreateFile,
+        string? contentSource = null)
     {
         var directory = "/" + directoryName;
         var target = directory + "/" + fileName;
         var state = new State("create-file", unlocked, dryRun, id, magic, null, target);
         state.Directory = directory;
         state.ContentLength = contentLength;
+        state.ContentSource = contentSource;
 
         BasicGuards(state, confirm);
         Add(state.Refusals, ValidateSegment(directoryName, "目录名"));
@@ -518,6 +520,7 @@ public static class CloudWriteOperations
             sourceParent = state.SourceParent, targetParent = state.TargetParent,
             preflightOk = state.PreflightOk, source = state.SourceDetail?.Summary,
             directory = state.Directory, contentBytes = state.Operation == "create-file" ? state.ContentLength : (int?)null,
+            contentSource = state.ContentSource,
             directoryCreated = state.Operation == "create-file" ? state.DirectoryCreated : (bool?)null,
             directoryEmpty = state.Operation == "create-file" ? state.DirectoryEmpty : (bool?)null,
         },
@@ -578,6 +581,9 @@ public static class CloudWriteOperations
         public string Target { get; }
         public string? Directory { get; set; }
         public int ContentLength { get; set; }
+
+        /// <summary>内容来源（内联 base64 或本地文件），只用于报告，不参与判断。</summary>
+        public string? ContentSource { get; set; }
         public bool DirectoryCreated { get; set; }
         public bool? DirectoryEmpty { get; set; }
         public int? RootEntryCount { get; set; }

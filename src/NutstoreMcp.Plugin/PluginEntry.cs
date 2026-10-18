@@ -201,6 +201,14 @@ public static class PluginEntry
         worker.Start();
     }
 
+    /// <summary>
+    /// 本地文件读取白名单：一行一个可信目录，<c>#</c> 开头为注释。
+    /// 文件不存在或没有有效条目时，「按本地文件创建云端文件」直接不可用。
+    /// </summary>
+    public static string ReadRootsFilePath => Path.Combine(
+        Path.GetDirectoryName(StateFilePath) ?? ".",
+        "read-roots.txt");
+
     /// <summary>设置界面开关的状态文件路径。</summary>
     public static string StateFilePath => string.IsNullOrEmpty(_stateFile)
         ? Path.Combine(

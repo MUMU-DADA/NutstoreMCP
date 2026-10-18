@@ -61,35 +61,77 @@ public sealed partial class PluginTools
     }
 
     [McpServerTool(Name = "nutstore_l3_create_file", ReadOnly = false, Destructive = false, Idempotent = false, OpenWorld = true)]
-    [Description("【默认只预演】上传内容并在云端创建一个新文件。需要写入解锁、confirm=true、dryRun=false。安全性来自结构：只允许在**本次调用新建、且建后确认为空**的目录里创建，所以新文件不可能与任何既有对象构成大小写别名（实测别名冲突会触发客户端改名，而改名的同内容/目录分支可能移动或删除既有对象）。目录名与文件名各为一个路径段，不接受多段路径；内容必须非空且不超过 256 KiB。提交后核对类型、大小、云端 hash、版本与目录成员；失败或未知只读复查，不重试、不回滚、不删除。")]
+    [Description("【默认只预演】上传内容并在云端创建一个新文件。需要写入解锁、confirm=true、dryRun=false。安全性来自结构：只允许在**本次调用新建、且建后确认为空**的目录里创建，所以新文件不可能与任何既有对象构成大小写别名（实测别名冲突会触发客户端改名，而改名的同内容/目录分支可能移动或删除既有对象）。目录名与文件名各为一个路径段，不接受多段路径；内容必须非空且不超过 256 KiB。内容二选一：contentBase64 直接给，或 sourcePath 指向一个本地文件（**默认关闭**，要先把可信目录一行一个写进 %LOCALAPPDATA%\\NutstoreMcp\\read-roots.txt；本地文件只在真正执行时读取，预演不读内容）。提交后核对类型、大小、云端 hash、版本与目录成员；失败或未知只读复查，不重试、不回滚、不删除。")]
     public static string L3CreateFile(
         [Description("沙箱 ID")] long sandboxId,
         [Description("沙箱的内部标识")] long magic,
         [Description("新目录名，单个路径段，不能含路径分隔符")] string directoryName,
         [Description("新文件名，单个路径段，不能含路径分隔符")] string fileName,
-        [Description("文件内容的 base64；非空且解码后不超过 256 KiB")] string contentBase64,
+        [Description("文件内容的 base64；与 sourcePath 二选一。非空且解码后不超过 256 KiB")] string? contentBase64 = null,
+        [Description("要上传的本地文件绝对路径；与 contentBase64 二选一，且必须落在读取白名单内")] string? sourcePath = null,
         [Description("必须显式传 true 才可能执行")] bool confirm = false,
         [Description("默认 true，只预演")] bool dryRun = true)
     {
         var ui = PluginEntry.Ui;
         if (ui is null) return UiUnavailable;
 
-        var encoded = contentBase64 ?? string.Empty;
+        var hasInline = !string.IsNullOrWhiteSpace(contentBase64);
+        var hasFile = !string.IsNullOrWhiteSpace(sourcePath);
 
-        // 先按编码长度挡一次，再去解码：解码发生在守卫之前，不挡的话一个远超上限的
-        // 请求会先被完整解进内存才被拒绝。
-        var lengthError = CloudWriteOperations.ValidateEncodedLength(encoded.Length);
-        if (lengthError is not null)
-            return JsonSerializer.Serialize(new { ok = false, reason = lengthError }, Indented);
-
-        byte[] content;
-        try
+        if (hasInline == hasFile)
         {
-            content = Convert.FromBase64String(encoded);
+            return JsonSerializer.Serialize(
+                new { ok = false, reason = "contentBase64 与 sourcePath 必须且只能给一个。" }, Indented);
         }
-        catch (FormatException)
+
+        // 内联模式：先按编码长度挡一次再解码；本地文件模式：只校验路径与大小，**不读内容**
+        // （内容留到真正执行那一步，预演不碰文件内容）。
+        string encoded = string.Empty;
+        int contentLength;
+        string contentSource;
+        Func<string> readContent;
+
+        if (hasInline)
         {
-            return JsonSerializer.Serialize(new { ok = false, reason = "内容不是有效的 base64。" }, Indented);
+            encoded = contentBase64 ?? string.Empty;
+
+            // 解码发生在守卫之前，不先挡的话一个远超上限的请求会先被完整解进内存才被拒绝。
+            var lengthError = CloudWriteOperations.ValidateEncodedLength(encoded.Length);
+            if (lengthError is not null)
+                return JsonSerializer.Serialize(new { ok = false, reason = lengthError }, Indented);
+
+            byte[] decoded;
+            try
+            {
+                decoded = Convert.FromBase64String(encoded);
+            }
+            catch (FormatException)
+            {
+                return JsonSerializer.Serialize(new { ok = false, reason = "内容不是有效的 base64。" }, Indented);
+            }
+
+            contentLength = decoded.Length;
+            contentSource = "inline-base64";
+            var payload = encoded;
+            readContent = () => payload;
+        }
+        else
+        {
+            var roots = LocalReadPolicy.ParseRoots(
+                LocalReadPolicy.TryReadRootsFile(PluginEntry.ReadRootsFilePath));
+
+            var policyError = LocalReadPolicy.Validate(
+                sourcePath, roots, CloudWriteOperations.MaxContentBytes, out var canonicalPath, out var fileLength);
+
+            if (policyError is not null)
+                return JsonSerializer.Serialize(new { ok = false, reason = policyError }, Indented);
+
+            contentLength = checked((int)fileLength);
+            contentSource = "file:" + canonicalPath;
+
+            var path = canonicalPath!;
+            var expected = fileLength;
+            readContent = () => Convert.ToBase64String(LocalReadPolicy.ReadExactly(path, expected));
         }
 
         try
@@ -100,12 +142,13 @@ public sealed partial class PluginTools
             var target = directory + "/" + fileName;
             return CloudWriteOperations.CreateFile(
                 PluginEntry.IsWriteUnlocked(), confirm, dryRun, sandboxId, magic, directoryName, fileName,
-                content.Length,
+                contentLength,
                 () => bindings,
                 path => ui.ListCloudDirectory(sandboxId, magic, path),
                 path => ui.ReadObjectDetail(sandboxId, magic, root ?? string.Empty, LocalObjectPath(root, path)),
                 () => ui.CreateCloudDirectory(sandboxId, magic, root ?? string.Empty, directory),
-                () => ui.CreateCloudFile(sandboxId, magic, root ?? string.Empty, target, encoded));
+                () => ui.CreateCloudFile(sandboxId, magic, root ?? string.Empty, target, readContent()),
+                contentSource);
         }
         catch (Exception ex) { return Error(ex); }
     }
