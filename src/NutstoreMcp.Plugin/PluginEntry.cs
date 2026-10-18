@@ -57,6 +57,79 @@ public static class PluginEntry
     {
         Ui = ui;
         _log?.Info(ui is null ? "UI 钩子为空 —— 界面工具不可用" : "UI 钩子已接入");
+
+        if (ui is not null)
+        {
+            StartToggleInstaller(ui);
+        }
+    }
+
+    /// <summary>设置页里那个开关的标题。</summary>
+    public const string ToggleTitle = "MCP 服务器";
+
+    /// <summary>设置页里那个开关的说明文字。</summary>
+    public const string ToggleSubtitle =
+        "允许 AI 助手读取坚果云的同步状态。关闭后停止监听，重启客户端或切换开关可恢复。";
+
+    /// <summary>
+    /// 把设置页里的 MCP 开关注入回去。
+    /// </summary>
+    /// <remarks>
+    /// 开关是**运行时插进设置页的 WPF 元素**，不写配置、不进 XAML，所以客户端一重启就没了。
+    /// 不自动装回去的话，用户看到的就是「开关凭空消失」，而界面上没有任何地方能把它找回来。
+    ///
+    /// 插件启动时设置页可能还没实例化，`AddToggle` 会返回「没找到设置项容器」，
+    /// 因此先密后疏地重试：前 2 分钟每 2 秒一次（覆盖正常启动），之后每 15 秒一次直到成功
+    /// （覆盖「用户很久以后才第一次打开设置页」）。成功即停 —— 注入本身幂等，
+    /// 但没必要反复摘了再装。
+    ///
+    /// 即使 MCP 服务当前是关闭的也要装：开关关着的时候，用户恰恰需要它来重新打开。
+    /// </remarks>
+    private static void StartToggleInstaller(IUiHook ui)
+    {
+        var worker = new Thread(() =>
+        {
+            var failures = 0;
+
+            for (var attempt = 1; ; attempt++)
+            {
+                try
+                {
+                    Thread.Sleep(attempt <= 60 ? 2000 : 15000);
+
+                    var result = ui.AddToggle(ToggleTitle, ToggleSubtitle, StateFilePath, ReadEnabledState());
+                    if (result is not null && result.IndexOf("\"ok\":true", StringComparison.Ordinal) >= 0)
+                    {
+                        _log?.Info($"设置页开关已自动恢复（第 {attempt} 次尝试）");
+                        return;
+                    }
+                }
+                catch (ThreadAbortException)
+                {
+                    // 子域被卸载 —— 正常关闭路径
+                    return;
+                }
+                catch (Exception ex)
+                {
+                    // 客户端退出时跨域代理会抛 RemotingException；偶发失败继续试，
+                    // 连续多次才放弃，避免一次抖动就永久失去自愈能力。
+                    failures++;
+                    _log?.Info($"自动恢复设置页开关第 {attempt} 次失败: {ex.GetType().Name}: {ex.Message}");
+
+                    if (failures >= 5)
+                    {
+                        _log?.Info("自动恢复设置页开关连续失败，停止重试（可调用 nutstore_ui_install_toggle 手动装）");
+                        return;
+                    }
+                }
+            }
+        })
+        {
+            IsBackground = true,
+            Name = "NutstoreMcp.ToggleInstaller",
+        };
+
+        worker.Start();
     }
 
     /// <summary>

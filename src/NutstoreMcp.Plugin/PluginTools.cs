@@ -1296,8 +1296,8 @@ public sealed partial class PluginTools
         try
         {
             return ui.AddToggle(
-                "MCP 服务器",
-                "允许 AI 助手读取坚果云的同步状态。关闭后停止监听，重启客户端或切换开关可恢复。",
+                PluginEntry.ToggleTitle,
+                PluginEntry.ToggleSubtitle,
                 PluginEntry.StateFilePath,
                 PluginEntry.ReadEnabledState());
         }
