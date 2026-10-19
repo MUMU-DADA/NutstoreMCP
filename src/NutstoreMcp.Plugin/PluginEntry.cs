@@ -217,6 +217,11 @@ public static class PluginEntry
         Path.GetDirectoryName(StateFilePath) ?? ".",
         NutstoreMcp.Plugin.L3.CreatedObjectLedger.FileName);
 
+    /// <summary>分享台账（jsonl）：只存 URL 的 SHA-256，不存链接原文。</summary>
+    public static string SharesFilePath => Path.Combine(
+        Path.GetDirectoryName(StateFilePath) ?? ".",
+        NutstoreMcp.Plugin.L3.ShareLedger.FileName);
+
     /// <summary>设置界面开关的状态文件路径。</summary>
     public static string StateFilePath => string.IsNullOrEmpty(_stateFile)
         ? Path.Combine(

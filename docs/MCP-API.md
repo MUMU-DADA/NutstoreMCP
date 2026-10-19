@@ -5,8 +5,8 @@ NutstoreMCP 把坚果云桌面客户端的查询与管理能力暴露为 MCP 工
 - 版本：插件 1.0.0.0，对应客户端 **7.2.12.0**
 - 传输：Streamable HTTP（只监听本机）
 - 端点：`http://127.0.0.1:17321/mcp`
-- 工具总数：**37**
-- 文档基准：源码 + 在线 `tools/list` + 真实调用返回形状（2026-10-19，`plugin-20261018-234333`，客户端契约已含 `DeleteCloudObject`）
+- 工具总数：**39**
+- 文档基准：源码 + 在线 `tools/list` + 真实调用返回形状（2026-10-19，`plugin-20261018-235459`，客户端契约已含 `DeleteCloudObject` / `ModifyCloudFile` / `PublishCloudObject`）
 
 ---
 
@@ -86,7 +86,9 @@ url: http://127.0.0.1:17321/mcp
 - 不读取 `nutstore.db` 中的 `encrypted_token` / `device_token` / `bcrypt_pwd_hash`。
 - 解绑、迁移同步根、ACL 写、分享写、文件锁等危险入口不开放（`nutstore_l3_forbidden_methods` 可列出代码级禁止清单）。
 - 删除只有台账限定的一条通道（`nutstore_l3_delete_created_object`）：只删 MCP 自己创建、且当前版本/大小/云端 hash 与创建台账完全一致的文件；禁止清单未放松，通用反射桥仍拒绝删除入口。
-- 写操作只允许在本次新建的测试目标上执行，或经台账限定的自我撤销；已有用户对象只读。
+- 修改（C4）同样只作用于台账限定对象：第一版只允许修改「台账最后一条是 created、且当前版本/大小/hash 与台账完全一致」的文件，执行必须带预演看到的 `expectedVersion`；产物是新版本，旧版本进历史（网页端可回退）。
+- 分享写只有 E1 公开链接一条通道（`nutstore_l3_publish_share`）：默认预演、必须 confirm；**分享 URL 是访问凭证**，默认不返回，只有显式 `returnUrl=true` 才返回，台账只存 SHA-256；客户端不能撤销，需在网页端操作。公开分享可能受账号等级限制（实测免费账号返回 `DisabledForFreeUser`，不产生任何分享）。
+- 写操作只允许在本次新建的测试目标、或台账限定的自我修改/撤销上执行；已有用户对象只读（分享是显式用户动作，不属于「写内容」）。
 
 ### 2.6 常见错误
 
@@ -107,7 +109,7 @@ url: http://127.0.0.1:17321/mcp
 | 界面探针 | `nutstore_ui_windows`、`nutstore_ui_tree`、`nutstore_ui_find`、`nutstore_ui_install_toggle`、`nutstore_ui_dump` | 读（install_toggle/dump 写本地界面/文件） |
 | 同步文件夹与账号 | `nutstore_l3_sync_folders`、`nutstore_l3_sync_folder_detail`、`nutstore_l3_create_sync_folder`、`nutstore_l3_create_cloud_folder`、`nutstore_l3_usage`、`nutstore_l3_user_info`、`nutstore_l3_contacts`、`nutstore_l3_search` | 读 + 2 个写 |
 | 云端文件读取 | `nutstore_l3_list_cloud_dir`、`nutstore_l3_object_detail`、`nutstore_l3_file_versions`、`nutstore_l3_share_info`、`nutstore_l3_path_acl`、`nutstore_l3_read_file`、`nutstore_l3_download` | 读（download 写本地） |
-| 云端文件写入 | `nutstore_l3_move`、`nutstore_l3_mkdir`、`nutstore_l3_create_file`、`nutstore_l3_delete_created_object` | 写（删除仅台账限定） |
+| 云端文件写入 | `nutstore_l3_move`、`nutstore_l3_mkdir`、`nutstore_l3_create_file`、`nutstore_l3_modify_file`、`nutstore_l3_delete_created_object`、`nutstore_l3_publish_share` | 写（修改/删除仅台账限定；分享需 confirm 且 URL 默认不外传） |
 | 客户端设置 | `nutstore_l3_read_settings`、`nutstore_l3_write_setting` | 读 / 写 |
 | 事件 | `nutstore_l3_latest_event`、`nutstore_l3_remote_events_page` | 读 |
 
@@ -319,6 +321,26 @@ url: http://127.0.0.1:17321/mcp
 
 ---
 
+### `nutstore_l3_modify_file`
+**用途**：修改 **MCP 自己创建（创建台账内）** 的云端文件的当前版本（C4）。**写，默认预演，`destructive=true`。**  
+**参数**：`sandboxId`、`magic`、`cloudPath`、`contentBase64`（必填，非空、≤256 KiB）；`expectedVersion`（预演看到的当前版本；执行时必填）；`confirm`；`dryRun`。  
+**返回**：`allowed`、`wouldWrite`、`dryRun`、`attempted`、`executed`、`probe{cloudPath, expectedVersion, current{version,sizeBytes,hash}, ledger{...}, newContent{bytes,sha256}, versionAfter}`、`refusals[]`、`result`（默认域钩子原始结果）、`verification{ok, versionAfter, contentMatches, readBackMatches, readBackSha256, historyHasPrevious, ledgerRecorded, errors[]}`、`notes[]`。  
+**门控（缺一不可）**：写入解锁 + `confirm=true` + `dryRun=false` + `expectedVersion` 与当前版本一致；创建台账里该路径最后一条必须是 `created`（第一版只允许修改一次）；当前详情必须仍是普通文件、未删除，且版本/大小/云端 hash 与台账完全一致（对象自创建以来没被改过）。  
+**行为**：全量上传新内容 → `ModifyFileParam` 提交新版本（`newVersion = 当前版本+1`）→ 写后核对新版本 > 旧版本、大小/hash、整文件分段回读 SHA-256、历史版本列表里仍有旧版本。  
+**回退**：修改产生新版本，旧版本进入历史 —— **网页端可以回退到旧版本**（C4 与 C5 的区别）。成功修改后该对象记为 `modified`，不能再被台账删除工具删除。  
+**限制**：第一版只支持 ≤256 KiB 内联内容、只修改文件（不含目录）、只修改未被改动过的台账对象；失败只报告，不重试、不回滚。
+
+### `nutstore_l3_publish_share`
+**用途**：为云端对象创建 **公开分享链接**（E1）。**写，默认预演，`destructive=true`（创建公开访问凭证）。**  
+**参数**：`sandboxId`、`magic`、`cloudPath`；`expireHours`（0 = 永久）；`password`（可选 1–64 字符）；`downloadDisabled`；`enableUpload`（只对文件夹分享有意义）；`returnUrl`（默认 false）；`confirm`；`dryRun`。  
+**返回**：`allowed`、`wouldWrite`、`dryRun`、`attempted`、`executed`、`probe{cloudPath, target, shareBefore, requested, urlSha256, publishVersion}`、`refusals[]`、`result`、`shares{url（仅 returnUrl=true 时非 null）, urlSha256, urlWithheld, stateAfter, settingsMatch, ledgerRecorded}`、`verification{...}`、`notes[]`。  
+**门控**：写入解锁 + `confirm=true` + `dryRun=false`；目标必须存在且未删除；**目标已有分享时拒绝**（第一版只创建新分享，不覆盖既有权限/密码/有效期设置）。  
+**红线**：**分享 URL 本身就是访问凭证**。默认不返回；只有显式 `returnUrl=true` 才返回，返回时 notes 会标注凭证属性。分享台账 `%LOCALAPPDATA%\NutstoreMcp\shares.jsonl` 只存 URL 的 SHA-256 与设置快照，**不存链接原文**。  
+**撤销**：客户端没有取消分享接口，需要在网页端撤销。写后只读复查分享状态与生效设置；失败或未知只报告，不重试、不自动撤销。  
+**账号限制**：公开分享可能受账号等级限制。实测免费账号返回 `RequestException (DisabledForFreeUser)`，此时不产生分享、写台账为空，工具如实报告失败。
+
+---
+
 ## 9. 客户端设置
 
 ### `nutstore_l3_read_settings`
@@ -351,5 +373,5 @@ url: http://127.0.0.1:17321/mcp
 ## 11. 兼容性
 
 - 工具绑定依赖客户端 **7.2.12.0** 的内部混淆符号；客户端升级后先跑 `nutstore_l3_verify_call_sites`，再跑 `.\deploy\check-client-bindings.ps1`。
-- `tools/list` 当前 37 项。新增/删除工具必须同步更新本文档。
+- `tools/list` 当前 39 项。新增/删除工具必须同步更新本文档。
 - 本文件是 API 契约，不是安全边界本身：真正的门控在插件与默认域钩子代码里，文档描述不构成绕过理由。

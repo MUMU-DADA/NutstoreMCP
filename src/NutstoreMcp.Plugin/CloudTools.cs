@@ -252,6 +252,100 @@ public sealed partial class PluginTools
         catch (Exception ex) { return Error(ex); }
     }
 
+    [McpServerTool(Name = "nutstore_l3_modify_file", ReadOnly = false, Destructive = true, Idempotent = false, OpenWorld = true)]
+    [Description("【默认只预演】修改 **MCP 自己创建（创建台账内）** 的云端文件的当前版本（C4）。第一版只支持 ≤256 KiB 内联内容；要求台账最后一条是 created、且当前版本/大小/云端 hash 与台账完全一致（对象自创建以来没被改过）。执行必须显式传 expectedVersion（预演里看到的当前版本）作为二次确认令牌，版本变了就拒绝。修改产生新版本、旧版本进入历史（网页端可回退）。写后核对新版本>旧版本、大小/云端 hash、整文件回读 SHA-256 与历史保留；失败只报告，不重试、不回滚。")]
+    public static string L3ModifyFile(
+        [Description("沙箱 ID")] long sandboxId,
+        [Description("沙箱的内部标识")] long magic,
+        [Description("要修改的云端文件路径，以 / 开头")] string cloudPath,
+        [Description("新内容的 base64，必须非空且解码后不超过 256 KiB")] string contentBase64,
+        [Description("预演时看到的当前版本号；执行时必填且必须与当前版本一致")] long expectedVersion = 0,
+        [Description("必须显式传 true 才可能执行")] bool confirm = false,
+        [Description("默认 true，只预演")] bool dryRun = true)
+    {
+        var ui = PluginEntry.Ui;
+        if (ui is null) return UiUnavailable;
+
+        var lengthError = CloudWriteOperations.ValidateEncodedLength((contentBase64 ?? string.Empty).Length);
+        if (lengthError is not null)
+            return JsonSerializer.Serialize(new { ok = false, reason = lengthError }, Indented);
+
+        byte[] decoded;
+        try
+        {
+            decoded = Convert.FromBase64String(contentBase64 ?? string.Empty);
+        }
+        catch (FormatException)
+        {
+            return JsonSerializer.Serialize(new { ok = false, reason = "内容不是有效的 base64。" }, Indented);
+        }
+
+        if (decoded.Length == 0)
+            return JsonSerializer.Serialize(new { ok = false, reason = "修改文件需要非空内容。" }, Indented);
+
+        try
+        {
+            var bindings = ui.ReadClientSyncFolders();
+            var root = BoundRoot(bindings, sandboxId, magic);
+            var expectedSha256 = CloudContentCodec.Sha256Hex(decoded);
+            var payload = contentBase64 ?? string.Empty;
+            return FileModify.Modify(
+                PluginEntry.CreatedObjectsFilePath,
+                PluginEntry.IsWriteUnlocked(), confirm, dryRun, sandboxId, magic, cloudPath,
+                decoded.Length, expectedSha256, payload, expectedVersion,
+                () => bindings,
+                path => ui.ReadObjectDetail(sandboxId, magic, root ?? string.Empty, LocalObjectPath(root, path)),
+                (path, offset, length) => ui.ReadCloudFileInline(sandboxId, magic, root ?? string.Empty, path, offset, length),
+                (id, path, version, content) => ui.ModifyCloudFile(id, magic, root ?? string.Empty, path, version, content),
+                path => ui.ListFileVersions(sandboxId, magic, root ?? string.Empty, LocalObjectPath(root, path)),
+                entry => CreatedObjectLedger.TryAppend(PluginEntry.CreatedObjectsFilePath, entry));
+        }
+        catch (Exception ex) { return Error(ex); }
+    }
+
+    [McpServerTool(Name = "nutstore_l3_publish_share", ReadOnly = false, Destructive = true, Idempotent = false, OpenWorld = true)]
+    [Description("【默认只预演】为云端对象创建 **公开分享链接**（E1）。需要写入解锁、confirm=true、dryRun=false；目标已有分享时拒绝（第一版只创建、不覆盖既有分享设置）。支持有效期（expireHours，0=永久）、访问密码、禁止下载。**分享 URL 本身就是访问凭证**：默认不返回，只有显式 returnUrl=true 才返回；分享台账只存 URL 的 SHA-256。客户端不能取消分享，需在网页端撤销。创建失败或结果未知只读复查，不重试、不自动撤销。")]
+    public static string L3PublishShare(
+        [Description("沙箱 ID")] long sandboxId,
+        [Description("沙箱的内部标识")] long magic,
+        [Description("要分享的云端路径，以 / 开头")] string cloudPath,
+        [Description("有效期小时数，0 表示永久")] int expireHours = 0,
+        [Description("访问密码，可选，1–64 字符")] string? password = null,
+        [Description("禁止下载")] bool downloadDisabled = false,
+        [Description("允许上传（只对文件夹分享有意义）")] bool enableUpload = false,
+        [Description("是否在返回里给出分享 URL（访问凭证）；默认 false")] bool returnUrl = false,
+        [Description("必须显式传 true 才可能执行")] bool confirm = false,
+        [Description("默认 true，只预演")] bool dryRun = true)
+    {
+        var ui = PluginEntry.Ui;
+        if (ui is null) return UiUnavailable;
+
+        if (expireHours < 0)
+            return JsonSerializer.Serialize(new { ok = false, reason = "expireHours 必须 ≥ 0。" }, Indented);
+        if (expireHours > 24 * 365 * 10)
+            return JsonSerializer.Serialize(new { ok = false, reason = "expireHours 过大（上限 10 年）。" }, Indented);
+
+        try
+        {
+            var bindings = ui.ReadClientSyncFolders();
+            var root = BoundRoot(bindings, sandboxId, magic);
+            var expireMills = expireHours == 0
+                ? 0L
+                : DateTimeOffset.UtcNow.AddHours(expireHours).ToUnixTimeMilliseconds();
+            return SharePublish.Publish(
+                PluginEntry.SharesFilePath,
+                PluginEntry.IsWriteUnlocked(), confirm, dryRun, sandboxId, magic, cloudPath,
+                expireMills, password, downloadDisabled, enableUpload, returnUrl,
+                () => bindings,
+                path => ui.ReadObjectDetail(sandboxId, magic, root ?? string.Empty, LocalObjectPath(root, path)),
+                path => ui.ReadShareInfo(sandboxId, magic, root ?? string.Empty, LocalObjectPath(root, path)),
+                (id, path, mills, pwd, noDownload, allowUpload) => ui.PublishCloudObject(
+                    id, magic, root ?? string.Empty, path, mills, pwd, noDownload, allowUpload),
+                entry => ShareLedger.TryAppend(PluginEntry.SharesFilePath, entry));
+        }
+        catch (Exception ex) { return Error(ex); }
+    }
+
     [McpServerTool(Name = "nutstore_l3_path_acl", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = true)]
     [Description("查询已绑定同步文件夹内某路径的权限继承状态、用户权限和组权限。只读，支持根路径；不修改权限，不导出客户端会话数据。成员清单最多各 200 项，超出会明确标注截断。")]
     public static string L3PathAcl(

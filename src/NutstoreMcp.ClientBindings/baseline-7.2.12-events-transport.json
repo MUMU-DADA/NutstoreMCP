@@ -1290,6 +1290,258 @@
       ]
     },
     {
+      "key": "ModifyFileMetadata",
+      "assemblyFile": "NutstoreClient.Legacy.dll",
+      "typeName": "A.c3795a089d76f103f11c4fe70f38ac8ca",
+      "memberName": "cf0f1928afd319c4539f6a8028fb3d5a3",
+      "kind": "method",
+      "purpose": "把新内容发布成已有文件的新版本（C4）",
+      "effect": "write",
+      "typeAttributes": "BeforeFieldInit",
+      "baseType": "[mscorlib]System.Object",
+      "members": [
+        {
+          "name": "cf0f1928afd319c4539f6a8028fb3d5a3",
+          "kind": "method",
+          "signature": "Default;instance=False;explicitThis=False;generic=0;required=1;valuetype [NutstoreClient.Legacy]NutstoreClient.Helpers.UpdateMetaDataResult(valuetype [NutstoreClient.Legacy]NutstoreClient.Helpers.ModifyFileParam);parameters=[{\"index\":1,\"attributes\":\"None\",\"constantType\":null,\"value\":null}]",
+          "attributes": "Public, Static, HideBySig",
+          "implementationAttributes": "IL",
+          "ilSha256": "BA082779BE8202D86019A400DFA412A24C409F653507C51CC7640B5A81269A91",
+          "bodyStructureSha256": "C08CB27CB91E855F32FE1FC86B6C950FACC5CD56EEFFD8590A24E22F1F6ACB1E",
+          "constantType": null,
+          "constantValue": null
+        }
+      ]
+    },
+    {
+      "key": "ModifyFileParam",
+      "assemblyFile": "NutstoreClient.Legacy.dll",
+      "typeName": "NutstoreClient.Helpers.ModifyFileParam",
+      "memberName": "",
+      "kind": "type",
+      "purpose": "修改文件参数结构（C4）",
+      "effect": "read",
+      "typeAttributes": "Public, SequentialLayout, Sealed, BeforeFieldInit",
+      "baseType": "[mscorlib]System.ValueType",
+      "members": []
+    },
+    {
+      "key": "ModifyFileParamBlockList",
+      "assemblyFile": "NutstoreClient.Legacy.dll",
+      "typeName": "NutstoreClient.Helpers.ModifyFileParam",
+      "memberName": "blockListNameBase64",
+      "kind": "field",
+      "purpose": "客户端辅助契约：ModifyFileParamBlockList",
+      "effect": "read",
+      "typeAttributes": "Public, SequentialLayout, Sealed, BeforeFieldInit",
+      "baseType": "[mscorlib]System.ValueType",
+      "members": [
+        {
+          "name": "blockListNameBase64",
+          "kind": "field",
+          "signature": "System.String",
+          "attributes": "Public",
+          "implementationAttributes": "",
+          "ilSha256": null,
+          "bodyStructureSha256": null,
+          "constantType": null,
+          "constantValue": null
+        }
+      ]
+    },
+    {
+      "key": "ModifyFileParamCompressible",
+      "assemblyFile": "NutstoreClient.Legacy.dll",
+      "typeName": "NutstoreClient.Helpers.ModifyFileParam",
+      "memberName": "compressible",
+      "kind": "field",
+      "purpose": "客户端辅助契约：ModifyFileParamCompressible",
+      "effect": "read",
+      "typeAttributes": "Public, SequentialLayout, Sealed, BeforeFieldInit",
+      "baseType": "[mscorlib]System.ValueType",
+      "members": [
+        {
+          "name": "compressible",
+          "kind": "field",
+          "signature": "System.Boolean",
+          "attributes": "Public",
+          "implementationAttributes": "",
+          "ilSha256": null,
+          "bodyStructureSha256": null,
+          "constantType": null,
+          "constantValue": null
+        }
+      ]
+    },
+    {
+      "key": "ModifyFileParamDeltaObject",
+      "assemblyFile": "NutstoreClient.Legacy.dll",
+      "typeName": "NutstoreClient.Helpers.ModifyFileParam",
+      "memberName": "deltaObjectNameBase64",
+      "kind": "field",
+      "purpose": "客户端辅助契约：ModifyFileParamDeltaObject",
+      "effect": "read",
+      "typeAttributes": "Public, SequentialLayout, Sealed, BeforeFieldInit",
+      "baseType": "[mscorlib]System.ValueType",
+      "members": [
+        {
+          "name": "deltaObjectNameBase64",
+          "kind": "field",
+          "signature": "System.String",
+          "attributes": "Public",
+          "implementationAttributes": "",
+          "ilSha256": null,
+          "bodyStructureSha256": null,
+          "constantType": null,
+          "constantValue": null
+        }
+      ]
+    },
+    {
+      "key": "ModifyFileParamExAttr",
+      "assemblyFile": "NutstoreClient.Legacy.dll",
+      "typeName": "NutstoreClient.Helpers.ModifyFileParam",
+      "memberName": "exAttr",
+      "kind": "field",
+      "purpose": "客户端辅助契约：ModifyFileParamExAttr",
+      "effect": "read",
+      "typeAttributes": "Public, SequentialLayout, Sealed, BeforeFieldInit",
+      "baseType": "[mscorlib]System.ValueType",
+      "members": [
+        {
+          "name": "exAttr",
+          "kind": "field",
+          "signature": "class [Nutstore.Common]Nutstore.Common.ExAttribute",
+          "attributes": "Public",
+          "implementationAttributes": "",
+          "ilSha256": null,
+          "bodyStructureSha256": null,
+          "constantType": null,
+          "constantValue": null
+        }
+      ]
+    },
+    {
+      "key": "ModifyFileParamFullObject",
+      "assemblyFile": "NutstoreClient.Legacy.dll",
+      "typeName": "NutstoreClient.Helpers.ModifyFileParam",
+      "memberName": "fullObjectNameBase64",
+      "kind": "field",
+      "purpose": "客户端辅助契约：ModifyFileParamFullObject",
+      "effect": "read",
+      "typeAttributes": "Public, SequentialLayout, Sealed, BeforeFieldInit",
+      "baseType": "[mscorlib]System.ValueType",
+      "members": [
+        {
+          "name": "fullObjectNameBase64",
+          "kind": "field",
+          "signature": "System.String",
+          "attributes": "Public",
+          "implementationAttributes": "",
+          "ilSha256": null,
+          "bodyStructureSha256": null,
+          "constantType": null,
+          "constantValue": null
+        }
+      ]
+    },
+    {
+      "key": "ModifyFileParamHash",
+      "assemblyFile": "NutstoreClient.Legacy.dll",
+      "typeName": "NutstoreClient.Helpers.ModifyFileParam",
+      "memberName": "hashBase64",
+      "kind": "field",
+      "purpose": "客户端辅助契约：ModifyFileParamHash",
+      "effect": "read",
+      "typeAttributes": "Public, SequentialLayout, Sealed, BeforeFieldInit",
+      "baseType": "[mscorlib]System.ValueType",
+      "members": [
+        {
+          "name": "hashBase64",
+          "kind": "field",
+          "signature": "System.String",
+          "attributes": "Public",
+          "implementationAttributes": "",
+          "ilSha256": null,
+          "bodyStructureSha256": null,
+          "constantType": null,
+          "constantValue": null
+        }
+      ]
+    },
+    {
+      "key": "ModifyFileParamNewVersion",
+      "assemblyFile": "NutstoreClient.Legacy.dll",
+      "typeName": "NutstoreClient.Helpers.ModifyFileParam",
+      "memberName": "newVersion",
+      "kind": "field",
+      "purpose": "客户端辅助契约：ModifyFileParamNewVersion",
+      "effect": "read",
+      "typeAttributes": "Public, SequentialLayout, Sealed, BeforeFieldInit",
+      "baseType": "[mscorlib]System.ValueType",
+      "members": [
+        {
+          "name": "newVersion",
+          "kind": "field",
+          "signature": "System.Int64",
+          "attributes": "Public",
+          "implementationAttributes": "",
+          "ilSha256": null,
+          "bodyStructureSha256": null,
+          "constantType": null,
+          "constantValue": null
+        }
+      ]
+    },
+    {
+      "key": "ModifyFileParamOldObject",
+      "assemblyFile": "NutstoreClient.Legacy.dll",
+      "typeName": "NutstoreClient.Helpers.ModifyFileParam",
+      "memberName": "oldObject",
+      "kind": "field",
+      "purpose": "客户端辅助契约：ModifyFileParamOldObject",
+      "effect": "read",
+      "typeAttributes": "Public, SequentialLayout, Sealed, BeforeFieldInit",
+      "baseType": "[mscorlib]System.ValueType",
+      "members": [
+        {
+          "name": "oldObject",
+          "kind": "field",
+          "signature": "class [NutstoreClient.Legacy]NutstoreClient.Common.NutstoreObject",
+          "attributes": "Public",
+          "implementationAttributes": "",
+          "ilSha256": null,
+          "bodyStructureSha256": null,
+          "constantType": null,
+          "constantValue": null
+        }
+      ]
+    },
+    {
+      "key": "ModifyFileParamSize",
+      "assemblyFile": "NutstoreClient.Legacy.dll",
+      "typeName": "NutstoreClient.Helpers.ModifyFileParam",
+      "memberName": "size",
+      "kind": "field",
+      "purpose": "客户端辅助契约：ModifyFileParamSize",
+      "effect": "read",
+      "typeAttributes": "Public, SequentialLayout, Sealed, BeforeFieldInit",
+      "baseType": "[mscorlib]System.ValueType",
+      "members": [
+        {
+          "name": "size",
+          "kind": "field",
+          "signature": "System.Int64",
+          "attributes": "Public",
+          "implementationAttributes": "",
+          "ilSha256": null,
+          "bodyStructureSha256": null,
+          "constantType": null,
+          "constantValue": null
+        }
+      ]
+    },
+    {
       "key": "MoveFile",
       "assemblyFile": "NutstoreClient.Legacy.dll",
       "typeName": "A.c3795a089d76f103f11c4fe70f38ac8ca",
@@ -1522,6 +1774,399 @@
           "implementationAttributes": "IL",
           "ilSha256": "F76549152A87B11E29C0CCD86712BF1B260C72D45DDE93F3C33B9A084A8B5AEA",
           "bodyStructureSha256": "9FDD1B4407FD5EC2232E0337340047286029857FFADEAB3971688084F880D2FA",
+          "constantType": null,
+          "constantValue": null
+        }
+      ]
+    },
+    {
+      "key": "PublishObject",
+      "assemblyFile": "NutstoreClient.Legacy.dll",
+      "typeName": "A.c3795a089d76f103f11c4fe70f38ac8ca",
+      "memberName": "cb7bf069a073dae425226623161a3ad67",
+      "kind": "method",
+      "purpose": "创建公开分享链接（E1）",
+      "effect": "write",
+      "typeAttributes": "BeforeFieldInit",
+      "baseType": "[mscorlib]System.Object",
+      "members": [
+        {
+          "name": "cb7bf069a073dae425226623161a3ad67",
+          "kind": "method",
+          "signature": "Default;instance=False;explicitThis=False;generic=0;required=2;class [NutstoreClient.Legacy]NutstoreClient.Common.PublishedObjectInfo(class [NutstoreClient.Legacy]NutstoreClient.Common.NutstorePath,class [NutstoreClient.Legacy]NutstoreClient.Common.PublishedObjectInfo);parameters=[{\"index\":1,\"attributes\":\"None\",\"constantType\":null,\"value\":null},{\"index\":2,\"attributes\":\"None\",\"constantType\":null,\"value\":null}]",
+          "attributes": "Public, Static, HideBySig",
+          "implementationAttributes": "IL",
+          "ilSha256": "0AAD0A53E4600AD61E4B31CE8AB60927080D40BD38176D5EE49FCB882520B625",
+          "bodyStructureSha256": "9D698101E0942B09CE1ACDC63312E1F0EE3309883F7E6A51E1BD933CEE7A35F5",
+          "constantType": null,
+          "constantValue": null
+        }
+      ]
+    },
+    {
+      "key": "PublishedObjectAcl",
+      "assemblyFile": "NutstoreClient.Legacy.dll",
+      "typeName": "NutstoreClient.Common.PublishedObjectInfo",
+      "memberName": "ACL",
+      "kind": "property",
+      "purpose": "客户端辅助契约：PublishedObjectAcl",
+      "effect": "read",
+      "typeAttributes": "Public, BeforeFieldInit",
+      "baseType": "[mscorlib]System.Object",
+      "members": [
+        {
+          "name": "get_ACL",
+          "kind": "method",
+          "signature": "Default;instance=True;explicitThis=False;generic=0;required=0;valuetype [NutstoreClient.Legacy]NutstoreClient.Common.WebACL+ACL();parameters=[]",
+          "attributes": "Public, HideBySig, SpecialName",
+          "implementationAttributes": "IL",
+          "ilSha256": "EBE32F6A0ADFB0376C71228D3A05A724C809937709BE9F4DCCAA5BFE01A814EC",
+          "bodyStructureSha256": "9FDD1B4407FD5EC2232E0337340047286029857FFADEAB3971688084F880D2FA",
+          "constantType": null,
+          "constantValue": null
+        },
+        {
+          "name": "set_ACL",
+          "kind": "method",
+          "signature": "Default;instance=True;explicitThis=False;generic=0;required=1;System.Void(valuetype [NutstoreClient.Legacy]NutstoreClient.Common.WebACL+ACL);parameters=[{\"index\":1,\"attributes\":\"None\",\"constantType\":null,\"value\":null}]",
+          "attributes": "Public, HideBySig, SpecialName",
+          "implementationAttributes": "IL",
+          "ilSha256": "202B821B5F23662632A38D9D808A7C8A175DBA624DECA6B58D26753C195B5C26",
+          "bodyStructureSha256": "9FDD1B4407FD5EC2232E0337340047286029857FFADEAB3971688084F880D2FA",
+          "constantType": null,
+          "constantValue": null
+        },
+        {
+          "name": "ACL",
+          "kind": "property",
+          "signature": "Default;instance=True;explicitThis=False;generic=0;required=0;valuetype [NutstoreClient.Legacy]NutstoreClient.Common.WebACL+ACL()",
+          "attributes": "None",
+          "implementationAttributes": "",
+          "ilSha256": null,
+          "bodyStructureSha256": null,
+          "constantType": null,
+          "constantValue": null
+        }
+      ]
+    },
+    {
+      "key": "PublishedObjectDownloadDisabled",
+      "assemblyFile": "NutstoreClient.Legacy.dll",
+      "typeName": "NutstoreClient.Common.PublishedObjectInfo",
+      "memberName": "DownloadDisabled",
+      "kind": "property",
+      "purpose": "客户端辅助契约：PublishedObjectDownloadDisabled",
+      "effect": "read",
+      "typeAttributes": "Public, BeforeFieldInit",
+      "baseType": "[mscorlib]System.Object",
+      "members": [
+        {
+          "name": "get_DownloadDisabled",
+          "kind": "method",
+          "signature": "Default;instance=True;explicitThis=False;generic=0;required=0;System.Boolean();parameters=[]",
+          "attributes": "Public, HideBySig, SpecialName",
+          "implementationAttributes": "IL",
+          "ilSha256": "A32E7669F1C7683344F0F045BB95B59EB15BFE8F4545663763538596BCA4CC48",
+          "bodyStructureSha256": "9FDD1B4407FD5EC2232E0337340047286029857FFADEAB3971688084F880D2FA",
+          "constantType": null,
+          "constantValue": null
+        },
+        {
+          "name": "set_DownloadDisabled",
+          "kind": "method",
+          "signature": "Default;instance=True;explicitThis=False;generic=0;required=1;System.Void(System.Boolean);parameters=[{\"index\":1,\"attributes\":\"None\",\"constantType\":null,\"value\":null}]",
+          "attributes": "Public, HideBySig, SpecialName",
+          "implementationAttributes": "IL",
+          "ilSha256": "F4542EAA3597F534C01B068C6E5D9B1F8218D53454D96FC6CACB850B0096EBC8",
+          "bodyStructureSha256": "9FDD1B4407FD5EC2232E0337340047286029857FFADEAB3971688084F880D2FA",
+          "constantType": null,
+          "constantValue": null
+        },
+        {
+          "name": "DownloadDisabled",
+          "kind": "property",
+          "signature": "Default;instance=True;explicitThis=False;generic=0;required=0;System.Boolean()",
+          "attributes": "None",
+          "implementationAttributes": "",
+          "ilSha256": null,
+          "bodyStructureSha256": null,
+          "constantType": null,
+          "constantValue": null
+        }
+      ]
+    },
+    {
+      "key": "PublishedObjectEnableUpload",
+      "assemblyFile": "NutstoreClient.Legacy.dll",
+      "typeName": "NutstoreClient.Common.PublishedObjectInfo",
+      "memberName": "EnableUpload",
+      "kind": "property",
+      "purpose": "客户端辅助契约：PublishedObjectEnableUpload",
+      "effect": "read",
+      "typeAttributes": "Public, BeforeFieldInit",
+      "baseType": "[mscorlib]System.Object",
+      "members": [
+        {
+          "name": "get_EnableUpload",
+          "kind": "method",
+          "signature": "Default;instance=True;explicitThis=False;generic=0;required=0;System.Boolean();parameters=[]",
+          "attributes": "Public, HideBySig, SpecialName",
+          "implementationAttributes": "IL",
+          "ilSha256": "05CED676A0C62CF4AF149B70114AECF81C07549CCEE21D115D27C46302F364CB",
+          "bodyStructureSha256": "9FDD1B4407FD5EC2232E0337340047286029857FFADEAB3971688084F880D2FA",
+          "constantType": null,
+          "constantValue": null
+        },
+        {
+          "name": "set_EnableUpload",
+          "kind": "method",
+          "signature": "Default;instance=True;explicitThis=False;generic=0;required=1;System.Void(System.Boolean);parameters=[{\"index\":1,\"attributes\":\"None\",\"constantType\":null,\"value\":null}]",
+          "attributes": "Public, HideBySig, SpecialName",
+          "implementationAttributes": "IL",
+          "ilSha256": "50FAB6AF056049638D8B71501894071B7495A6506D2080A48DD8B74689AA437C",
+          "bodyStructureSha256": "9FDD1B4407FD5EC2232E0337340047286029857FFADEAB3971688084F880D2FA",
+          "constantType": null,
+          "constantValue": null
+        },
+        {
+          "name": "EnableUpload",
+          "kind": "property",
+          "signature": "Default;instance=True;explicitThis=False;generic=0;required=0;System.Boolean()",
+          "attributes": "None",
+          "implementationAttributes": "",
+          "ilSha256": null,
+          "bodyStructureSha256": null,
+          "constantType": null,
+          "constantValue": null
+        }
+      ]
+    },
+    {
+      "key": "PublishedObjectExpire",
+      "assemblyFile": "NutstoreClient.Legacy.dll",
+      "typeName": "NutstoreClient.Common.PublishedObjectInfo",
+      "memberName": "ExpireMillsSinceEpoch",
+      "kind": "property",
+      "purpose": "客户端辅助契约：PublishedObjectExpire",
+      "effect": "read",
+      "typeAttributes": "Public, BeforeFieldInit",
+      "baseType": "[mscorlib]System.Object",
+      "members": [
+        {
+          "name": "get_ExpireMillsSinceEpoch",
+          "kind": "method",
+          "signature": "Default;instance=True;explicitThis=False;generic=0;required=0;System.Int64();parameters=[]",
+          "attributes": "Public, HideBySig, SpecialName",
+          "implementationAttributes": "IL",
+          "ilSha256": "FBFE3258AE202B23AD205E42897B6112FDAA60A0F504E15EB387F2CAB7F35FC3",
+          "bodyStructureSha256": "9FDD1B4407FD5EC2232E0337340047286029857FFADEAB3971688084F880D2FA",
+          "constantType": null,
+          "constantValue": null
+        },
+        {
+          "name": "set_ExpireMillsSinceEpoch",
+          "kind": "method",
+          "signature": "Default;instance=True;explicitThis=False;generic=0;required=1;System.Void(System.Int64);parameters=[{\"index\":1,\"attributes\":\"None\",\"constantType\":null,\"value\":null}]",
+          "attributes": "Public, HideBySig, SpecialName",
+          "implementationAttributes": "IL",
+          "ilSha256": "9A91A5947A184F4DCF99ADD3D79504C9E3B208F8589AC059C965E7824E4BB13B",
+          "bodyStructureSha256": "9FDD1B4407FD5EC2232E0337340047286029857FFADEAB3971688084F880D2FA",
+          "constantType": null,
+          "constantValue": null
+        },
+        {
+          "name": "ExpireMillsSinceEpoch",
+          "kind": "property",
+          "signature": "Default;instance=True;explicitThis=False;generic=0;required=0;System.Int64()",
+          "attributes": "None",
+          "implementationAttributes": "",
+          "ilSha256": null,
+          "bodyStructureSha256": null,
+          "constantType": null,
+          "constantValue": null
+        }
+      ]
+    },
+    {
+      "key": "PublishedObjectInfo",
+      "assemblyFile": "NutstoreClient.Legacy.dll",
+      "typeName": "NutstoreClient.Common.PublishedObjectInfo",
+      "memberName": "",
+      "kind": "type",
+      "purpose": "分享信息结构（E1）",
+      "effect": "read",
+      "typeAttributes": "Public, BeforeFieldInit",
+      "baseType": "[mscorlib]System.Object",
+      "members": []
+    },
+    {
+      "key": "PublishedObjectInfoCtor",
+      "assemblyFile": "NutstoreClient.Legacy.dll",
+      "typeName": "NutstoreClient.Common.PublishedObjectInfo",
+      "memberName": ".ctor",
+      "kind": "method",
+      "purpose": "客户端辅助契约：PublishedObjectInfoCtor",
+      "effect": "read",
+      "typeAttributes": "Public, BeforeFieldInit",
+      "baseType": "[mscorlib]System.Object",
+      "members": [
+        {
+          "name": ".ctor",
+          "kind": "method",
+          "signature": "Default;instance=True;explicitThis=False;generic=0;required=0;System.Void();parameters=[]",
+          "attributes": "Private, HideBySig, SpecialName, RTSpecialName",
+          "implementationAttributes": "IL",
+          "ilSha256": "C7261ECC514A2F80F8C1E01B17FA5756E00198ED842B1E34D76F203D0F99D731",
+          "bodyStructureSha256": "9FDD1B4407FD5EC2232E0337340047286029857FFADEAB3971688084F880D2FA",
+          "constantType": null,
+          "constantValue": null
+        },
+        {
+          "name": ".ctor",
+          "kind": "method",
+          "signature": "Default;instance=True;explicitThis=False;generic=0;required=1;System.Void(class [NutstoreClient.Legacy]NutstoreClient.Common.WebACL);parameters=[{\"index\":1,\"attributes\":\"None\",\"constantType\":null,\"value\":null}]",
+          "attributes": "Public, HideBySig, SpecialName, RTSpecialName",
+          "implementationAttributes": "IL",
+          "ilSha256": "0A9CAB52A641B7939C53804AA359C5602976161BFD4A17BA4980FE75556AFDA8",
+          "bodyStructureSha256": "9FDD1B4407FD5EC2232E0337340047286029857FFADEAB3971688084F880D2FA",
+          "constantType": null,
+          "constantValue": null
+        }
+      ]
+    },
+    {
+      "key": "PublishedObjectPassword",
+      "assemblyFile": "NutstoreClient.Legacy.dll",
+      "typeName": "NutstoreClient.Common.PublishedObjectInfo",
+      "memberName": "Password",
+      "kind": "property",
+      "purpose": "客户端辅助契约：PublishedObjectPassword",
+      "effect": "read",
+      "typeAttributes": "Public, BeforeFieldInit",
+      "baseType": "[mscorlib]System.Object",
+      "members": [
+        {
+          "name": "get_Password",
+          "kind": "method",
+          "signature": "Default;instance=True;explicitThis=False;generic=0;required=0;System.String();parameters=[]",
+          "attributes": "Public, HideBySig, SpecialName",
+          "implementationAttributes": "IL",
+          "ilSha256": "A1E704D1D6F7AD71DBF5DC0DF371F93909C63BC8A2D14F371C9150AA99BCBFE0",
+          "bodyStructureSha256": "9FDD1B4407FD5EC2232E0337340047286029857FFADEAB3971688084F880D2FA",
+          "constantType": null,
+          "constantValue": null
+        },
+        {
+          "name": "set_Password",
+          "kind": "method",
+          "signature": "Default;instance=True;explicitThis=False;generic=0;required=1;System.Void(System.String);parameters=[{\"index\":1,\"attributes\":\"None\",\"constantType\":null,\"value\":null}]",
+          "attributes": "Public, HideBySig, SpecialName",
+          "implementationAttributes": "IL",
+          "ilSha256": "F3887A7621EB1238DFADC7ADEB3B2C2D3ED7BBB364ACB3D49AF523717B83A793",
+          "bodyStructureSha256": "9FDD1B4407FD5EC2232E0337340047286029857FFADEAB3971688084F880D2FA",
+          "constantType": null,
+          "constantValue": null
+        },
+        {
+          "name": "Password",
+          "kind": "property",
+          "signature": "Default;instance=True;explicitThis=False;generic=0;required=0;System.String()",
+          "attributes": "None",
+          "implementationAttributes": "",
+          "ilSha256": null,
+          "bodyStructureSha256": null,
+          "constantType": null,
+          "constantValue": null
+        }
+      ]
+    },
+    {
+      "key": "PublishedObjectUrl",
+      "assemblyFile": "NutstoreClient.Legacy.dll",
+      "typeName": "NutstoreClient.Common.PublishedObjectInfo",
+      "memberName": "Url",
+      "kind": "property",
+      "purpose": "客户端辅助契约：PublishedObjectUrl",
+      "effect": "read",
+      "typeAttributes": "Public, BeforeFieldInit",
+      "baseType": "[mscorlib]System.Object",
+      "members": [
+        {
+          "name": "get_Url",
+          "kind": "method",
+          "signature": "Default;instance=True;explicitThis=False;generic=0;required=0;System.String();parameters=[]",
+          "attributes": "Public, HideBySig, SpecialName",
+          "implementationAttributes": "IL",
+          "ilSha256": "EB3CD7A601565BC2811A92A79892BE33BC776551B226F98D59A2E5CFB2EAAC5E",
+          "bodyStructureSha256": "9FDD1B4407FD5EC2232E0337340047286029857FFADEAB3971688084F880D2FA",
+          "constantType": null,
+          "constantValue": null
+        },
+        {
+          "name": "set_Url",
+          "kind": "method",
+          "signature": "Default;instance=True;explicitThis=False;generic=0;required=1;System.Void(System.String);parameters=[{\"index\":1,\"attributes\":\"None\",\"constantType\":null,\"value\":null}]",
+          "attributes": "Private, HideBySig, SpecialName",
+          "implementationAttributes": "IL",
+          "ilSha256": "5B590C53221E10AD9DD8E496C0C2A968D9FAD6D89632425BF61BCDB4927E4624",
+          "bodyStructureSha256": "9FDD1B4407FD5EC2232E0337340047286029857FFADEAB3971688084F880D2FA",
+          "constantType": null,
+          "constantValue": null
+        },
+        {
+          "name": "Url",
+          "kind": "property",
+          "signature": "Default;instance=True;explicitThis=False;generic=0;required=0;System.String()",
+          "attributes": "None",
+          "implementationAttributes": "",
+          "ilSha256": null,
+          "bodyStructureSha256": null,
+          "constantType": null,
+          "constantValue": null
+        }
+      ]
+    },
+    {
+      "key": "PublishedObjectVersion",
+      "assemblyFile": "NutstoreClient.Legacy.dll",
+      "typeName": "NutstoreClient.Common.PublishedObjectInfo",
+      "memberName": "Version",
+      "kind": "property",
+      "purpose": "客户端辅助契约：PublishedObjectVersion",
+      "effect": "read",
+      "typeAttributes": "Public, BeforeFieldInit",
+      "baseType": "[mscorlib]System.Object",
+      "members": [
+        {
+          "name": "get_Version",
+          "kind": "method",
+          "signature": "Default;instance=True;explicitThis=False;generic=0;required=0;System.Int32();parameters=[]",
+          "attributes": "Public, HideBySig, SpecialName",
+          "implementationAttributes": "IL",
+          "ilSha256": "AD6F307DA3FD7F8D28E712EC9303FEFA4EAF9C794782F3875999EDA843330F04",
+          "bodyStructureSha256": "9FDD1B4407FD5EC2232E0337340047286029857FFADEAB3971688084F880D2FA",
+          "constantType": null,
+          "constantValue": null
+        },
+        {
+          "name": "set_Version",
+          "kind": "method",
+          "signature": "Default;instance=True;explicitThis=False;generic=0;required=1;System.Void(System.Int32);parameters=[{\"index\":1,\"attributes\":\"None\",\"constantType\":null,\"value\":null}]",
+          "attributes": "Private, HideBySig, SpecialName",
+          "implementationAttributes": "IL",
+          "ilSha256": "F6D81CB9B18374CDEA3076D9677A6A6A6208B3512F0CCE15988362F716D7AB3F",
+          "bodyStructureSha256": "9FDD1B4407FD5EC2232E0337340047286029857FFADEAB3971688084F880D2FA",
+          "constantType": null,
+          "constantValue": null
+        },
+        {
+          "name": "Version",
+          "kind": "property",
+          "signature": "Default;instance=True;explicitThis=False;generic=0;required=0;System.Int32()",
+          "attributes": "None",
+          "implementationAttributes": "",
+          "ilSha256": null,
+          "bodyStructureSha256": null,
           "constantType": null,
           "constantValue": null
         }
@@ -2628,6 +3273,66 @@
           "implementationAttributes": "IL",
           "ilSha256": "E35672607FCD974A2FF645514EF1774748128A0872E774957D01C67BE6021C65",
           "bodyStructureSha256": "657EF6863C9C7F04EE8D8665122E730054F72DCD85D574EA49BABBD7D6EC8843",
+          "constantType": null,
+          "constantValue": null
+        }
+      ]
+    },
+    {
+      "key": "WebAcl",
+      "assemblyFile": "NutstoreClient.Legacy.dll",
+      "typeName": "NutstoreClient.Common.WebACL",
+      "memberName": "",
+      "kind": "type",
+      "purpose": "分享权限结构（E1）",
+      "effect": "read",
+      "typeAttributes": "Public, BeforeFieldInit",
+      "baseType": "[mscorlib]System.Object",
+      "members": []
+    },
+    {
+      "key": "WebAclPublic",
+      "assemblyFile": "NutstoreClient.Legacy.dll",
+      "typeName": "NutstoreClient.Common.WebACL",
+      "memberName": "PublicWebACL",
+      "kind": "field",
+      "purpose": "客户端辅助契约：WebAclPublic",
+      "effect": "read",
+      "typeAttributes": "Public, BeforeFieldInit",
+      "baseType": "[mscorlib]System.Object",
+      "members": [
+        {
+          "name": "PublicWebACL",
+          "kind": "field",
+          "signature": "class [NutstoreClient.Legacy]NutstoreClient.Common.WebACL",
+          "attributes": "Public, Static, InitOnly",
+          "implementationAttributes": "",
+          "ilSha256": null,
+          "bodyStructureSha256": null,
+          "constantType": null,
+          "constantValue": null
+        }
+      ]
+    },
+    {
+      "key": "WebAclSigninUser",
+      "assemblyFile": "NutstoreClient.Legacy.dll",
+      "typeName": "NutstoreClient.Common.WebACL",
+      "memberName": "SigninUserWebACL",
+      "kind": "field",
+      "purpose": "客户端辅助契约：WebAclSigninUser",
+      "effect": "read",
+      "typeAttributes": "Public, BeforeFieldInit",
+      "baseType": "[mscorlib]System.Object",
+      "members": [
+        {
+          "name": "SigninUserWebACL",
+          "kind": "field",
+          "signature": "class [NutstoreClient.Legacy]NutstoreClient.Common.WebACL",
+          "attributes": "Public, Static, InitOnly",
+          "implementationAttributes": "",
+          "ilSha256": null,
+          "bodyStructureSha256": null,
           "constantType": null,
           "constantValue": null
         }

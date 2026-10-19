@@ -10,7 +10,7 @@ MCP 客户端（DSH 等）
       ▼
 ┌─ 坚果云客户端进程 ─────────────────────────────────────────┐
 │  插件子 AppDomain：NutstoreMcp.Plugin                      │
-│    · MCP 服务器与 37 个工具                                │
+│    · MCP 服务器与 39 个工具                                │
 │    · 全部写入门控、预检与写后复查                          │
 │            │  IUiHook 契约（只传普通值与 JSON）             │
 │            ▼                                               │
@@ -59,6 +59,10 @@ MCP 客户端（DSH 等）
 - **桥的边界**：只允许客户端程序集；拒绝反射/委托/危险方法/参数；BUFFER 总量 ≤ 8 MiB；`VALUE` 只能构造白名单结构体（如 `CreateFileParam`）。
 - **隐私**：不导出会话、分享链接、分享密码、被邀请者/组名单；不读取 `nutstore.db` 的 token/密码字段；错误只保留异常类型/错误码/HTTP 状态。
 
+- **台账限定的修改（C4）**：`nutstore_l3_modify_file` 只修改创建台账里「最后一条是 created、且当前版本/大小/云端 hash 与台账完全一致」的文件。执行必须带预演时看到的 `expectedVersion`（二次确认令牌）；提交前紧邻复查版本（`cf0f1928…` 内部会用 `newVersion = 当前+1`），写后核对新版本/大小/hash、整文件回读 SHA-256 与历史版本保留（旧版本仍在 = 网页端可回退）。第一版不支持目录、≤256 KiB 内联内容、每个对象只允许一次修改。
+- **分享（E1）**：`nutstore_l3_publish_share` 是唯一分享通道，默认预演、必须 confirm，目标已有分享时拒绝（不覆盖既有设置）。**URL 是访问凭证**：默认不返回，只有显式 `returnUrl=true` 才返回；分享台账 `shares.jsonl` 只存 URL 的 SHA-256。客户端没有取消分享接口，撤销要在网页端做。实测免费账号的公开分享被服务端以 `DisabledForFreeUser` 拒绝（无副作用）。
+- **台账文件**：`%LOCALAPPDATA%\NutstoreMcp\created-objects.jsonl`（创建/修改/删除记录）与 `shares.jsonl`（分享记录）。台账是删除/修改授权范围的唯一来源；删掉台账不会影响云端对象，只是失去撤销/修改授权。
+
 ## 上传与哈希
 
 客户端以 **393216 字节**为界选择上传方式，两条路径的云端 hash 公式相同：
@@ -77,9 +81,9 @@ MCP 客户端（DSH 等）
 
 ## 兼容性与验证
 
-- 当前验证客户端 **7.2.12.0**；所有混淆符号集中在 `src/NutstoreMcp.ClientBindings/ClientSymbols.cs`，基线为 `baseline-7.2.12-events-transport.json`（84 项 / 3 个程序集）。
+- 当前验证客户端 **7.2.12.0**；所有混淆符号集中在 `src/NutstoreMcp.ClientBindings/ClientSymbols.cs`，基线为 `baseline-7.2.12-events-transport.json`（108 项 / 3 个程序集）。
 - 客户端升级后：`.\deploy\check-client-bindings.ps1` 只读比对 PE/IL 指纹，差异必须人工复核；运行时用 `nutstore_l3_verify_call_sites` 再查方法是否还在。
-- `.\verify.ps1`：6 个项目构建、343 项主测试、17 项 WPF 探针、11 项配置补丁、绑定登记检查。
+- `.\verify.ps1`：6 个项目构建、375 项主测试、17 项 WPF 探针、11 项配置补丁、绑定登记检查。
 - 部署：`deploy/build.ps1`（插件热重载）/ `deploy/restart-client.ps1`（钩子或契约变更）；首次安装见 [deploy/README.md](deploy/README.md)。
 
 ## 目录结构

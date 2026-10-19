@@ -42,6 +42,9 @@
     <Compile Include="..\..\src\NutstoreMcp.Plugin\L3\LocalDirectoryProbe.cs" Link="L3\LocalDirectoryProbe.cs" />
     <Compile Include="..\..\src\NutstoreMcp.Plugin\L3\CreatedObjectLedger.cs" Link="L3\CreatedObjectLedger.cs" />
     <Compile Include="..\..\src\NutstoreMcp.Plugin\L3\CreatedObjectDelete.cs" Link="L3\CreatedObjectDelete.cs" />
+    <Compile Include="..\..\src\NutstoreMcp.Plugin\L3\FileModify.cs" Link="L3\FileModify.cs" />
+    <Compile Include="..\..\src\NutstoreMcp.Plugin\L3\ShareLedger.cs" Link="L3\ShareLedger.cs" />
+    <Compile Include="..\..\src\NutstoreMcp.Plugin\L3\SharePublish.cs" Link="L3\SharePublish.cs" />
     <Compile Include="..\..\src\NutstoreMcp.Plugin\L3\RemoteEventCodec.cs" Link="L3\RemoteEventCodec.cs" />
     <Compile Include="..\..\src\NutstoreMcp.Plugin\L3\CloudContentCodec.cs" Link="L3\CloudContentCodec.cs" />
     <Compile Include="..\..\src\NutstoreMcp.ClientBindings\ClientSymbols.cs" Link="ClientBindings\ClientSymbols.cs" />

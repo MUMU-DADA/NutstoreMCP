@@ -108,6 +108,26 @@ internal static class ClientCallSites
 
         new(
             CloudOpsType,
+            ClientSymbols.ModifyFileMetadata,
+            "把新内容发布成已有文件的新版本（ModifyCloudFile，C4）",
+            Mutates: true,
+            Why: "只修改**创建台账里登记过、且当前版本/大小/哈希与台账完全一致**的 MCP 自建文件；"
+               + "执行必须带预演时看到的 expectedVersion，提交前再核对一次版本；"
+               + "修改产生新版本、旧版本进入历史（网页端可回退），写后核对大小/哈希/版本与整文件回读；"
+               + "失败不重试、不回滚。通用桥仍只能构造 CreateFileParam，拿不到 ModifyFileParam。"),
+
+        new(
+            CloudOpsType,
+            ClientSymbols.PublishObject,
+            "创建公开分享链接（PublishCloudObject，E1）",
+            Mutates: true,
+            Why: "只在显式 confirm 后创建一次分享，且目标已有分享时拒绝（不覆盖既有权限/密码/有效期）；"
+               + "URL 是访问凭证，默认不返回、台账只存 SHA-256；"
+               + "失败不重试、不自动撤销（撤销需在网页端）。"
+               + "通用桥拿不到这条入口，分享只能经专用工具创建。"),
+
+        new(
+            CloudOpsType,
             ClientSymbols.Search,
             "在云端按关键词搜索（SearchCloud）",
             Mutates: false,

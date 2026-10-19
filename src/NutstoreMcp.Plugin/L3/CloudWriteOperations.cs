@@ -423,30 +423,44 @@ public static class CloudWriteOperations
             return;
         }
 
+        var bytes = ReadBackAll(readInline, state.Target, state.ContentLength, state.VerificationErrors);
+        if (bytes is null) return;
+
+        var actual = CloudContentCodec.Sha256Hex(bytes);
+        state.ReadBackSha256 = actual;
+        state.ReadBackMatches = string.Equals(actual, expected, StringComparison.OrdinalIgnoreCase);
+        if (state.ReadBackMatches != true)
+            state.VerificationErrors.Add("写后回读的字节与期望内容不一致（SHA-256 不匹配）。");
+    }
+
+    /// <summary>按 256 KiB 分段把云端文件整文件读回来；失败时把原因写进 errors 并返回 null。</summary>
+    internal static byte[]? ReadBackAll(Func<string, long, long, string> readInline, string path, int length,
+        List<string> errors)
+    {
         using var all = new MemoryStream();
         long offset = 0;
         const int chunk = 256 * 1024;
-        while (offset < state.ContentLength)
+        while (offset < length)
         {
-            var want = (int)Math.Min(chunk, state.ContentLength - offset);
-            var json = ReadJson(() => readInline(state.Target, offset, want), state.VerificationErrors, "回读分段");
-            if (json is null) return;
+            var want = (int)Math.Min(chunk, (long)length - offset);
+            var json = ReadJson(() => readInline(path, offset, want), errors, "回读分段");
+            if (json is null) return null;
 
             var value = json.Value;
             if (!IsTrue(value, "ok")
                 || !TryLong(value, "offset", out var returnedOffset) || returnedOffset != offset
                 || !TryLong(value, "length", out var returnedLength) || returnedLength != want)
             {
-                state.VerificationErrors.Add("回读分段返回的范围与请求不一致。");
-                return;
+                errors.Add("回读分段返回的范围与请求不一致。");
+                return null;
             }
 
-            var segment = ReadSegmentBytes(value, state.VerificationErrors);
-            if (segment is null) return;
+            var segment = ReadSegmentBytes(value, errors);
+            if (segment is null) return null;
             if (segment.Length != want)
             {
-                state.VerificationErrors.Add("回读分段的字节数与请求不一致。");
-                return;
+                errors.Add("回读分段的字节数与请求不一致。");
+                return null;
             }
 
             all.Write(segment, 0, segment.Length);
@@ -454,17 +468,13 @@ public static class CloudWriteOperations
         }
 
         var bytes = all.ToArray();
-        if (bytes.Length != state.ContentLength)
+        if (bytes.Length != length)
         {
-            state.VerificationErrors.Add("回读到的总字节数与期望内容不一致。");
-            return;
+            errors.Add("回读到的总字节数与期望内容不一致。");
+            return null;
         }
 
-        var actual = CloudContentCodec.Sha256Hex(bytes);
-        state.ReadBackSha256 = actual;
-        state.ReadBackMatches = string.Equals(actual, expected, StringComparison.OrdinalIgnoreCase);
-        if (state.ReadBackMatches != true)
-            state.VerificationErrors.Add("写后回读的字节与期望内容不一致（SHA-256 不匹配）。");
+        return bytes;
     }
 
     /// <summary>从读取侧返回的 JSON 里还原原始字节：二进制走 contentBase64，文本走 text（BOM 补回）。</summary>

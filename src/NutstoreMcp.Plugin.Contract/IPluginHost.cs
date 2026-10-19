@@ -270,4 +270,30 @@ public interface IUiHook
     /// </remarks>
     string DeleteCloudObject(
         long sandboxId, long magic, string localRoot, string cloudPath, long expectedVersion, string expectedHash);
+
+    /// <summary>
+    /// 把新内容发布成**已有云端文件**的新版本（C4）。
+    /// </summary>
+    /// <remarks>
+    /// **会改云端**：先全量上传新内容，再用 <c>ModifyFileParam</c> 提交新版本；
+    /// 旧版本进入历史（网页端可回退）。调用方必须已在插件侧完成创建台账、
+    /// 当前版本核对与内容校验；本方法只接受「当前详情与预期版本完全一致」的普通文件。
+    /// 提交前再次只读核对版本，提交后核对大小/哈希/版本与历史列表；
+    /// 失败或结果未知不重试、不回滚。
+    /// </remarks>
+    string ModifyCloudFile(
+        long sandboxId, long magic, string localRoot, string cloudPath, long expectedVersion, string base64Content);
+
+    /// <summary>
+    /// 为云端对象创建**公开分享链接**（E1）。
+    /// </summary>
+    /// <remarks>
+    /// **会改云端**（创建公开访问凭证）。只由专用分享工具在预演 + confirm 之后调用；
+    /// 调用方必须先确认目标当前**没有**分享，避免覆盖既有分享设置。
+    /// 返回包含 <c>url</c>（URL 本身是访问凭证，调用方必须按自己的策略决定是否外传）
+    /// 以及发布版本和实际生效的设置；失败或结果未知不重试、不回滚。
+    /// </remarks>
+    string PublishCloudObject(
+        long sandboxId, long magic, string localRoot, string cloudPath,
+        long expireMillsSinceEpoch, string? password, bool downloadDisabled, bool enableUpload);
 }

@@ -20,6 +20,9 @@ internal static class ClientSymbols
     public const string SandboxDaoType = "NutstoreClient.DAO.NSSandboxDAO";
     public const string CapsOnPathType = "NutstoreClient.Common.CapsOnPathBean";
     public const string CreateFileParamType = "NutstoreClient.Helpers.CreateFileParam";
+    public const string ModifyFileParamType = "NutstoreClient.Helpers.ModifyFileParam";
+    public const string PublishedObjectInfoType = "NutstoreClient.Common.PublishedObjectInfo";
+    public const string WebAclType = "NutstoreClient.Common.WebACL";
     public const string CompressionMethodType = "NutstoreClient.Connection.CompressionMethod";
     public const string HashAlgorithmsType = "Nutstore.Common.Helpers.HashAlgorithms";
     public const string RequestExceptionType = "NutstoreClient.Connection.RequestException";
@@ -65,6 +68,10 @@ internal static class ClientSymbols
     public const string UploadBlockList = "ca34e3c9186d3d82a9b7e8f0d2ef38961";
     public const string CreateFileMetadata = "cf02e04aba958d38757ce778e8f94ae50";
 
+    // P3/P4 新入口。仍在调查阶段时也登记：成员与签名变化会在升级检查里暴露出来。
+    public const string ModifyFileMetadata = "cf0f1928afd319c4539f6a8028fb3d5a3";
+    public const string PublishObject = "cb7bf069a073dae425226623161a3ad67";
+
     // 调查过的入口也参与升级检查；登记不代表允许执行。
     public const string ReadEventsWithLocalWrites = "c524be38afabc83eacc7d38aceea8700c";
     // 私有会话头生成器；通用桥可反射非公开方法，必须永久禁止导出其结果。
@@ -108,6 +115,8 @@ internal static class ClientSymbols
         Entry(nameof(UploadBlock), UploadBlock, "上传单个 4 MiB 内容块（大文件分块上传）", "write"),
         Entry(nameof(UploadBlockList), UploadBlockList, "发布块列表（大文件分块上传）", "write"),
         Entry(nameof(CreateFileMetadata), CreateFileMetadata, "创建文件元数据；碰撞语义待在线核实", "write"),
+        Entry(nameof(ModifyFileMetadata), ModifyFileMetadata, "把新内容发布成已有文件的新版本（C4）", "write"),
+        Entry(nameof(PublishObject), PublishObject, "创建公开分享链接（E1）", "write"),
         new ClientSymbol("CompressionMethodValues", CloudOpsAssembly, CompressionMethodType,
             "", "上传压缩枚举", "read", "enum"),
         Support("UploadMd5", CommonAssembly, HashAlgorithmsType, "GetMd5Digest"),
@@ -121,6 +130,30 @@ internal static class ClientSymbols
         Support("CreateFileParamBlockList", CloudOpsAssembly, CreateFileParamType, "blockListNameBase64", "field"),
         Support("CreateFileParamCompressible", CloudOpsAssembly, CreateFileParamType, "compressible", "field"),
         Support("CreateFileParamExAttr", CloudOpsAssembly, CreateFileParamType, "exAttr", "field"),
+        new ClientSymbol("ModifyFileParam", CloudOpsAssembly, ModifyFileParamType, "",
+            "修改文件参数结构（C4）", "read", "type"),
+        Support("ModifyFileParamOldObject", CloudOpsAssembly, ModifyFileParamType, "oldObject", "field"),
+        Support("ModifyFileParamSize", CloudOpsAssembly, ModifyFileParamType, "size", "field"),
+        Support("ModifyFileParamHash", CloudOpsAssembly, ModifyFileParamType, "hashBase64", "field"),
+        Support("ModifyFileParamFullObject", CloudOpsAssembly, ModifyFileParamType, "fullObjectNameBase64", "field"),
+        Support("ModifyFileParamDeltaObject", CloudOpsAssembly, ModifyFileParamType, "deltaObjectNameBase64", "field"),
+        Support("ModifyFileParamBlockList", CloudOpsAssembly, ModifyFileParamType, "blockListNameBase64", "field"),
+        Support("ModifyFileParamNewVersion", CloudOpsAssembly, ModifyFileParamType, "newVersion", "field"),
+        Support("ModifyFileParamCompressible", CloudOpsAssembly, ModifyFileParamType, "compressible", "field"),
+        Support("ModifyFileParamExAttr", CloudOpsAssembly, ModifyFileParamType, "exAttr", "field"),
+        new ClientSymbol("PublishedObjectInfo", CloudOpsAssembly, PublishedObjectInfoType, "",
+            "分享信息结构（E1）", "read", "type"),
+        Support("PublishedObjectInfoCtor", CloudOpsAssembly, PublishedObjectInfoType, ".ctor"),
+        Support("PublishedObjectUrl", CloudOpsAssembly, PublishedObjectInfoType, "Url", "property"),
+        Support("PublishedObjectVersion", CloudOpsAssembly, PublishedObjectInfoType, "Version", "property"),
+        Support("PublishedObjectDownloadDisabled", CloudOpsAssembly, PublishedObjectInfoType, "DownloadDisabled", "property"),
+        Support("PublishedObjectEnableUpload", CloudOpsAssembly, PublishedObjectInfoType, "EnableUpload", "property"),
+        Support("PublishedObjectExpire", CloudOpsAssembly, PublishedObjectInfoType, "ExpireMillsSinceEpoch", "property"),
+        Support("PublishedObjectPassword", CloudOpsAssembly, PublishedObjectInfoType, "Password", "property"),
+        Support("PublishedObjectAcl", CloudOpsAssembly, PublishedObjectInfoType, "ACL", "property"),
+        new ClientSymbol("WebAcl", CloudOpsAssembly, WebAclType, "", "分享权限结构（E1）", "read", "type"),
+        Support("WebAclPublic", CloudOpsAssembly, WebAclType, "PublicWebACL", "field"),
+        Support("WebAclSigninUser", CloudOpsAssembly, WebAclType, "SigninUserWebACL", "field"),
         Support("ReflectionReadField", CloudOpsAssembly, "NutstoreClient.Helpers.ReflectionHelper", "GetFieldValue", effect: "forbidden"),
         Support("ReflectionWriteField", CloudOpsAssembly, "NutstoreClient.Helpers.ReflectionHelper", "SetFieldValue", effect: "forbidden"),
         Support("ReflectionReadProperty", CloudOpsAssembly, "NutstoreClient.Helpers.ReflectionHelper", "GetPropertyValue", effect: "forbidden"),
