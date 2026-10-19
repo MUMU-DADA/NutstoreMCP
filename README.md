@@ -65,6 +65,7 @@ docs/     MCP-API、开发计划、归档文档
 - [MCP-API](docs/MCP-API.md) — 36 个工具的完整参考
 - [ARCHITECTURE](ARCHITECTURE.md) — 当前架构、安全模型与上传协议
 - [开发计划](docs/开发计划.md) — 状态、验证基线、未开放项与后续
+- [跨端兼容性评估](docs/跨端兼容性评估.md) — mac/Linux/Android/iOS/Web 客户端技术栈与移植难度
 - [归档文档](docs/archive/README.md) — 过期文档与历史结论
 
 早期 L1 WebDAV / L2 本地只读独立服务器已于 2026-10-18 退役，代码和测试已删除，背景见归档。
