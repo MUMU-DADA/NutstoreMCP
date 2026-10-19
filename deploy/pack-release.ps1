@@ -94,7 +94,7 @@ Ok '安装/卸载脚本与工具就绪'
 Step '压缩 …'
 $zip = Join-Path $stageRoot "$name.zip"
 if (Test-Path $zip) { Remove-Item $zip -Force }
-Compress-Archive -Path (Join-Path $stage '*') -DestinationPath $zip -CompressionLevel Optimal
+Compress-Archive -Path $stage -DestinationPath $zip -CompressionLevel Optimal
 $zipLength = (Get-Item $zip).Length
 Ok ("压缩包 {0:N1} MB" -f ($zipLength / 1MB))
 

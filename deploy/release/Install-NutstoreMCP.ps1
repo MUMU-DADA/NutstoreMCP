@@ -337,7 +337,7 @@ if ($mcpUp) {
 else {
     Warn '90 秒内没等到 MCP 端点。'
     Write-Host "     桥日志: $WorkRoot\logs\bridge.log" -ForegroundColor DarkGray
-    Write-Host "     插件日志: $WorkRoot\logs\plugin.log" -ForegroundColor DarkGray
+    Write-Host "     插件日志: $pluginHome\logs\plugin.log" -ForegroundColor DarkGray
     Write-Host '     常见原因：客户端没有加载桥（配置未生效/被安全软件拦截），重启客户端再看日志。' -ForegroundColor DarkGray
 }
 

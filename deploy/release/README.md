@@ -110,7 +110,7 @@ powershell -ExecutionPolicy Bypass -File .\Uninstall-NutstoreMCP.ps1 -Purge
 | 现象 | 处理 |
 |---|---|
 | 安装脚本提示「找不到坚果云客户端」 | 先安装坚果云桌面客户端并至少启动一次 |
-| 装完 MCP 连不上 | 看 `%LOCALAPPDATA%\NutstoreMcp\logs\bridge.log` 与 `plugin.log` 的尾部；重启一次客户端 |
+| 装完 MCP 连不上 | 看 `%LOCALAPPDATA%\NutstoreMcp\logs\bridge.log`；插件日志在 `%LOCALAPPDATA%\NutstoreMcp\plugin-1.1.0\logs\plugin.log`（`nutstore_plugin_status` 会给出准确 logPath）。重启一次客户端 |
 | 提示客户端版本不匹配 | 本包只支持 7.2.12.0；升级客户端后需要新的发布包 |
 | 客户端启动不了 | 运行 `Uninstall-NutstoreMCP.ps1` 还原配置（会从启动前的备份恢复） |
 | 工具里返回 `available:false` | UI 钩子没加载：确认已重启客户端、`bridge.ini` 存在且 `home` 指向的目录存在 |
