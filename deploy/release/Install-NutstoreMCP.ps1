@@ -163,6 +163,37 @@ function Stop-NutstoreClient {
     }
 }
 
+function Start-NutstoreClient {
+    $exe = Join-Path $ClientDir 'NutstoreClient.exe'
+    Start-Process -FilePath $exe
+
+    $deadline = (Get-Date).AddSeconds(60)
+    while ((Get-Date) -lt $deadline -and -not (Get-Process -Name 'NutstoreClient' -ErrorAction SilentlyContinue)) {
+        Start-Sleep -Seconds 1
+    }
+    Start-Sleep -Seconds 10
+    if (Get-Process -Name 'NutstoreClient' -ErrorAction SilentlyContinue) {
+        return $true
+    }
+
+    # 兜底：直接 Start-Process 没站住时，用计划任务在用户会话里启动。
+    # （提权上下文里偶尔会出现「起来了又立刻退出」，计划任务更稳。）
+    $taskName = 'NutstoreMcp-StartClient'
+    & schtasks.exe /Delete /TN $taskName /F 2>&1 | Out-Null
+    & schtasks.exe /Create /TN $taskName /TR "`"$exe`"" /SC ONCE /ST 00:00 /RL LIMITED /F 2>&1 | Out-Null
+    if ($LASTEXITCODE -eq 0) {
+        & schtasks.exe /Run /TN $taskName 2>&1 | Out-Null
+        $deadline = (Get-Date).AddSeconds(60)
+        while ((Get-Date) -lt $deadline -and -not (Get-Process -Name 'NutstoreClient' -ErrorAction SilentlyContinue)) {
+            Start-Sleep -Seconds 2
+        }
+        & schtasks.exe /Delete /TN $taskName /F 2>&1 | Out-Null
+        Start-Sleep -Seconds 8
+    }
+
+    return [bool](Get-Process -Name 'NutstoreClient' -ErrorAction SilentlyContinue)
+}
+
 Step '停止坚果云 …'
 Stop-NutstoreClient
 Ok '已退出'
@@ -208,9 +239,7 @@ if ($Uninstall) {
     }
 
     Step '重新启动坚果云 …'
-    Start-Process -FilePath (Join-Path $ClientDir 'NutstoreClient.exe')
-    Start-Sleep -Seconds 8
-    if (Get-Process -Name 'NutstoreClient' -ErrorAction SilentlyContinue) {
+    if (Start-NutstoreClient) {
         Ok '已启动（bridge 已卸载，MCP 端点不会再监听）'
     }
     else {
@@ -294,18 +323,8 @@ else {
 
 # ── 启动并验证 ──
 Step '启动坚果云 …'
-$exe = Join-Path $ClientDir 'NutstoreClient.exe'
-Start-Process -FilePath $exe
-
-$deadline = (Get-Date).AddSeconds(60)
-while ((Get-Date) -lt $deadline -and -not (Get-Process -Name 'NutstoreClient' -ErrorAction SilentlyContinue)) {
-    Start-Sleep -Seconds 1
-}
-$started = Get-Process -Name 'NutstoreClient' -ErrorAction SilentlyContinue
-if (-not $started) { Warn '客户端 60 秒内没有启动，请看客户端日志'; Wait-IfElevated; exit 1 }
-Start-Sleep -Seconds 10
-if (-not (Get-Process -Name 'NutstoreClient' -ErrorAction SilentlyContinue)) {
-    Warn '客户端启动后又退出了 —— 请手动启动并检查是否有错误弹窗'
+if (-not (Start-NutstoreClient)) {
+    Warn '客户端没有保持运行 —— 请手动启动坚果云，并检查是否有错误弹窗'
     Wait-IfElevated
     exit 1
 }

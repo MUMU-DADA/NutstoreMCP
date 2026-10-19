@@ -25,8 +25,11 @@ if (-not (Test-Path $installer)) {
     exit 1
 }
 
-$installArgs = @('-Uninstall')
-if ($Purge) { $installArgs += '-Purge' }
+if ($Purge) {
+    & $installer -Uninstall -Purge
+}
+else {
+    & $installer -Uninstall
+}
 
-& $installer @installArgs
 exit $LASTEXITCODE
