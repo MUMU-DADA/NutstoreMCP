@@ -96,6 +96,18 @@ internal static class ClientCallSites
 
         new(
             CloudOpsType,
+            ClientSymbols.DeleteObject,
+            "删除云端普通文件（DeleteCloudObject，仅专用删除工具）",
+            Mutates: true,
+            Why: "只删除**创建台账里记录过、且当前详情版本与哈希完全匹配**的 MCP 自建对象；"
+               + "删除前再次只读核对类型、路径、版本与哈希，删除后只做只读复查。"
+               + "通用桥与反射工具仍然拿不到这个入口 —— 共享禁止清单没有放松，"
+               + "专用路径绕过的是「通用通道」，不是安全检查。"
+               + "客户端会把删除同步到本地绑定目录；这只对 MCP 自己创建的对象成立，"
+               + "不因「是测试文件」自动获得授权，也绝不删除用户已有对象。"),
+
+        new(
+            CloudOpsType,
             ClientSymbols.Search,
             "在云端按关键词搜索（SearchCloud）",
             Mutates: false,

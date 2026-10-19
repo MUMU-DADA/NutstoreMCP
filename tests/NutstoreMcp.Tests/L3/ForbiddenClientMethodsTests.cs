@@ -133,4 +133,18 @@ public class ForbiddenClientMethodsTests
             Assert.Contains(method, json, StringComparison.Ordinal);
         }
     }
+
+    [Fact]
+    public void 专用放行条目仍在导出清单里并标注范围()
+    {
+        var json = ForbiddenClientMethods.Describe();
+
+        Assert.Contains("\"dedicatedOnly\"", json, StringComparison.Ordinal);
+        Assert.Contains("\"dedicated-only\"", json, StringComparison.Ordinal);
+        // 专用放行不等于放松：通用通道仍然拒绝。
+        Assert.NotNull(ForbiddenClientMethods.Check(null, ClientSymbols.DeleteObject));
+        Assert.True(ForbiddenClientMethods.IsDedicatedOnly(ClientSymbols.DeleteObject));
+        Assert.False(ForbiddenClientMethods.IsDedicatedOnly(null));
+        Assert.False(ForbiddenClientMethods.IsDedicatedOnly("   "));
+    }
 }

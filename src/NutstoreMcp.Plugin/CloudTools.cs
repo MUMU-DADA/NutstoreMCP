@@ -182,7 +182,8 @@ public sealed partial class PluginTools
                     () => ui.CreateCloudDirectory(sandboxId, magic, root ?? string.Empty, directory),
                     createFile,
                     contentSource,
-                    maxContentBytes: contentLimit);
+                    maxContentBytes: contentLimit,
+                    recordCreated: created => RecordCreatedObject(sandboxId, created));
             }
 
             var existingDirectory = directoryPath!;
@@ -202,7 +203,51 @@ public sealed partial class PluginTools
                     sandboxId, magic, root ?? string.Empty, path, offset, length),
                 expectedSha256,
                 contentSource,
-                maxContentBytes: contentLimit);
+                maxContentBytes: contentLimit,
+                recordCreated: created => RecordCreatedObject(sandboxId, created));
+        }
+        catch (Exception ex) { return Error(ex); }
+    }
+
+    /// <summary>把一次成功创建写进创建台账；删除工具只认这里登记过的对象。</summary>
+    private static bool RecordCreatedObject(long sandboxId, CloudWriteOperations.CreatedObject created)
+        => CreatedObjectLedger.TryAppend(
+            PluginEntry.CreatedObjectsFilePath,
+            new CreatedObjectLedger.Entry(
+                DateTimeOffset.Now,
+                sandboxId,
+                created.Path,
+                created.Version,
+                created.Hash ?? string.Empty,
+                created.Size,
+                "nutstore_l3_create_file",
+                created.ContentSource,
+                CreatedObjectLedger.ActionCreated));
+
+    [McpServerTool(Name = "nutstore_l3_delete_created_object", ReadOnly = false, Destructive = true, Idempotent = false, OpenWorld = true)]
+    [Description("【默认只预演】删除一个 **MCP 自己创建、且创建台账完全匹配** 的云端普通文件。需要写入解锁、confirm=true、dryRun=false。只认台账里最后一条记录为 created、且当前详情版本/大小/云端 hash 与台账完全一致的对象；目录、用户已有对象、大小写别名、创建后被修改过的对象一律拒绝。客户端会把云端删除同步到本地绑定目录 —— 这只对 MCP 自己写出的对象成立。失败或结果未知只读复查，不重试、不恢复。")]
+    public static string L3DeleteCreatedObject(
+        [Description("沙箱 ID")] long sandboxId,
+        [Description("沙箱的内部标识")] long magic,
+        [Description("要删除的云端文件路径，以 / 开头")] string cloudPath,
+        [Description("必须显式传 true 才可能执行")] bool confirm = false,
+        [Description("默认 true，只预演")] bool dryRun = true)
+    {
+        var ui = PluginEntry.Ui;
+        if (ui is null) return UiUnavailable;
+
+        try
+        {
+            var bindings = ui.ReadClientSyncFolders();
+            var root = BoundRoot(bindings, sandboxId, magic);
+            return CreatedObjectDelete.Delete(
+                PluginEntry.CreatedObjectsFilePath,
+                PluginEntry.IsWriteUnlocked(), confirm, dryRun, sandboxId, magic, cloudPath,
+                () => bindings,
+                path => ui.ReadObjectDetail(sandboxId, magic, root ?? string.Empty, LocalObjectPath(root, path)),
+                path => ui.ListCloudDirectory(sandboxId, magic, path),
+                (id, path, version, hash) => ui.DeleteCloudObject(id, magic, root ?? string.Empty, path, version, hash),
+                entry => CreatedObjectLedger.TryAppend(PluginEntry.CreatedObjectsFilePath, entry));
         }
         catch (Exception ex) { return Error(ex); }
     }

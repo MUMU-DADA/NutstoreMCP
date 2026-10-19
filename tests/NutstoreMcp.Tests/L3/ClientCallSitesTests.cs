@@ -71,11 +71,35 @@ public class ClientCallSitesTests
     [Fact]
     public void 禁止清单与调用点清单不冲突()
     {
-        // 一个方法既在禁止清单里又在调用点清单里，说明两处判断矛盾了
+        // 一个方法既在禁止清单里又在调用点清单里，说明两处判断矛盾了 ——
+        // 例外是「专用放行」条目：通用通道仍拒绝，但专用工具（台账限定的删除）有独立路径。
         foreach (var site in ClientCallSites.Registered)
         {
-            Assert.Null(ForbiddenClientMethods.Check(site.TypeName, site.MethodName));
+            var reason = ForbiddenClientMethods.Check(site.TypeName, site.MethodName);
+            Assert.True(reason is null || ForbiddenClientMethods.IsDedicatedOnly(site.MethodName),
+                $"{site.MethodName} 在禁止清单里又没有标记为专用放行：{reason}");
         }
+    }
+
+    [Fact]
+    public void 专用放行的删除入口仍然禁止通用调用()
+    {
+        var reason = ForbiddenClientMethods.Check(ClientCallSites.CloudOpsType, ClientSymbols.DeleteObject);
+
+        Assert.NotNull(reason);
+        Assert.True(ForbiddenClientMethods.IsDedicatedOnly(ClientSymbols.DeleteObject));
+        Assert.False(ForbiddenClientMethods.IsDedicatedOnly(ClientSymbols.ReadObjectDetail));
+    }
+
+    [Fact]
+    public void 删除调用点登记说明了台账限定与不放松通用通道()
+    {
+        var delete = ClientCallSites.Find(ClientSymbols.DeleteObject);
+
+        Assert.NotNull(delete);
+        Assert.True(delete!.Mutates);
+        Assert.Contains("台账", delete.Why, StringComparison.Ordinal);
+        Assert.Contains("禁止清单", delete.Why, StringComparison.Ordinal);
     }
 
     [Fact]

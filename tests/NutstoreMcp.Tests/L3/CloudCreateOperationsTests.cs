@@ -299,6 +299,41 @@ public class CloudCreateOperationsTests
         Assert.NotNull(CloudWriteOperations.ValidateEncodedLength(CloudWriteOperations.MaxEncodedLength + 1));
     }
 
+    [Fact]
+    public void 创建成功会调用台账回调()
+    {
+        var recorded = new List<CloudWriteOperations.CreatedObject>();
+        var cloud = new Fake();
+        using var result = cloud.Create(recordCreated: created =>
+        {
+            recorded.Add(created);
+            return true;
+        });
+
+        Assert.True(Flag(result, "executed"));
+        var entry = Assert.Single(recorded);
+        Assert.Equal("/dir/a.txt", entry.Path);
+        Assert.Equal(12, entry.Size);
+        Assert.Equal("create-file", entry.Operation);
+        Assert.True(result.RootElement.GetProperty("verification").GetProperty("ledgerRecorded").GetBoolean());
+    }
+
+    [Fact]
+    public void 预演不写台账()
+    {
+        var recorded = new List<CloudWriteOperations.CreatedObject>();
+        var cloud = new Fake();
+        using var result = cloud.Create(dryRun: true, recordCreated: created =>
+        {
+            recorded.Add(created);
+            return true;
+        });
+
+        Assert.Empty(recorded);
+        Assert.Equal(System.Text.Json.JsonValueKind.Null,
+            result.RootElement.GetProperty("verification").GetProperty("ledgerRecorded").ValueKind);
+    }
+
     private static bool Flag(JsonDocument result, string name) => result.RootElement.GetProperty(name).GetBoolean();
 
     private sealed record Item(string Type, bool Deleted, long Version, long Size, string Hash);
@@ -331,7 +366,8 @@ public class CloudCreateOperationsTests
         public JsonDocument Create(
             bool unlocked = true, bool confirm = true, bool dryRun = false,
             string directory = "dir", string file = "a.txt", int contentLength = 12,
-            int? maxContentBytes = null)
+            int? maxContentBytes = null,
+            Func<CloudWriteOperations.CreatedObject, bool>? recordCreated = null)
         {
             _directory = directory;
             _file = file;
@@ -339,7 +375,8 @@ public class CloudCreateOperationsTests
             return JsonDocument.Parse(CloudWriteOperations.CreateFile(
                 unlocked, confirm, dryRun, 7, 11, directory, file, contentLength,
                 Bindings, List, Detail, CreateDirectory, CreateFile,
-                maxContentBytes: maxContentBytes ?? CloudWriteOperations.MaxContentBytes));
+                maxContentBytes: maxContentBytes ?? CloudWriteOperations.MaxContentBytes,
+                recordCreated: recordCreated));
         }
 
         private string Bindings()

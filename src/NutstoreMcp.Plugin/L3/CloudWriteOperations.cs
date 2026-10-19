@@ -87,6 +87,13 @@ public static class CloudWriteOperations
     public const int MaxEncodedLength = ((MaxContentBytes + 2) / 3) * 4;
 
     /// <summary>
+    /// 一次成功创建的结果：交给上层写创建台账。
+    /// 删除工具只认台账里登记过、且后续状态完全匹配的对象。
+    /// </summary>
+    public sealed record CreatedObject(
+        string Path, long Version, string? Hash, int Size, string? ContentSource, string Operation);
+
+    /// <summary>
     /// 先按编码长度挡一次，再去解码。
     /// 目的是**不为超大输入先解出一大块内存** —— base64 解码发生在守卫之前，
     /// 没有这道检查的话，一个远超上限的请求会先被完整解码进内存才被拒绝。
@@ -114,7 +121,8 @@ public static class CloudWriteOperations
         string directoryName, string fileName, int contentLength,
         Func<string> bindings, Func<string, string> listDirectory, Func<string, string> readDetail,
         Func<string> executeCreateDirectory, Func<string> executeCreateFile,
-        string? contentSource = null, int maxContentBytes = MaxContentBytes)
+        string? contentSource = null, int maxContentBytes = MaxContentBytes,
+        Func<CreatedObject, bool>? recordCreated = null)
     {
         var directory = "/" + directoryName;
         var target = directory + "/" + fileName;
@@ -174,6 +182,8 @@ public static class CloudWriteOperations
             }
         }
 
+        RecordCreatedObject(state, recordCreated);
+
         return Serialize(state);
     }
 
@@ -210,7 +220,8 @@ public static class CloudWriteOperations
         Func<string> executeCreateFile,
         Func<string, long, long, string> readInline,
         Func<string> expectedSha256,
-        string? contentSource = null, int maxContentBytes = MaxContentBytes)
+        string? contentSource = null, int maxContentBytes = MaxContentBytes,
+        Func<CreatedObject, bool>? recordCreated = null)
     {
         var target = (cloudDirectory == "/" ? string.Empty : cloudDirectory) + "/" + fileName;
         var state = new State("create-file-existing", unlocked, dryRun, id, magic, null, target);
@@ -294,6 +305,8 @@ public static class CloudWriteOperations
                 VerifyCreateFileInExisting(state, listDirectory, readDetail, readInline, expectedSha256);
             }
         }
+
+        RecordCreatedObject(state, recordCreated);
 
         return Serialize(state);
     }
@@ -559,7 +572,7 @@ public static class CloudWriteOperations
         }
     }
 
-    private static string? ReadBinding(Func<string> read, long id, long magic, List<string> errors)
+    internal static string? ReadBinding(Func<string> read, long id, long magic, List<string> errors)
     {
         var json = ReadJson(read, errors, "同步绑定");
         if (json is null) return null;
@@ -633,7 +646,7 @@ public static class CloudWriteOperations
         return result;
     }
 
-    private static List<string>? ReadDirectory(Func<string, string> read, string parent, List<string> errors)
+    internal static List<string>? ReadDirectory(Func<string, string> read, string parent, List<string> errors)
     {
         var json = ReadJson(() => read(parent), errors, "父目录列表 " + parent);
         if (json is null) return null;
@@ -792,7 +805,33 @@ public static class CloudWriteOperations
         foreach (var error in state.VerificationErrors) state.Refusals.Add("写后复查：" + error);
     }
 
-    private static JsonElement? ReadJson(Func<string> read, List<string> errors, string label)
+    /// <summary>创建成功后写创建台账；台账写失败不影响本次创建结果，但会在返回里说明。</summary>
+    private static void RecordCreatedObject(State state, Func<CreatedObject, bool>? record)
+    {
+        if (!state.Executed) return;
+        state.LedgerAttempted = record is not null;
+        if (record is null) return;
+
+        var version = state.TargetDetail?.Version ?? 0;
+        var hash = state.TargetDetail?.Hash;
+        if (version <= 0 || string.IsNullOrWhiteSpace(hash))
+        {
+            state.LedgerRecorded = false;
+            return;
+        }
+
+        try
+        {
+            state.LedgerRecorded = record(new CreatedObject(
+                state.Target, version, hash, state.ContentLength, state.ContentSource, state.Operation));
+        }
+        catch (Exception)
+        {
+            state.LedgerRecorded = false;
+        }
+    }
+
+    internal static JsonElement? ReadJson(Func<string> read, List<string> errors, string label)
     {
         try
         {
@@ -811,13 +850,13 @@ public static class CloudWriteOperations
         }
     }
 
-    private static bool IsTrue(JsonElement value, string name) => value.ValueKind == JsonValueKind.Object
+    internal static bool IsTrue(JsonElement value, string name) => value.ValueKind == JsonValueKind.Object
         && value.TryGetProperty(name, out var member) && member.ValueKind == JsonValueKind.True;
 
-    private static string? Text(JsonElement value, string name) => value.TryGetProperty(name, out var member)
+    internal static string? Text(JsonElement value, string name) => value.TryGetProperty(name, out var member)
         && member.ValueKind == JsonValueKind.String ? member.GetString() : null;
 
-    private static bool TryLong(JsonElement value, string name, out long number)
+    internal static bool TryLong(JsonElement value, string name, out long number)
     {
         number = 0;
         return value.TryGetProperty(name, out var member)
@@ -826,7 +865,7 @@ public static class CloudWriteOperations
                     NumberStyles.Integer, CultureInfo.InvariantCulture, out number));
     }
 
-    private static bool? ReadBool(JsonElement value, string name)
+    internal static bool? ReadBool(JsonElement value, string name)
     {
         if (!value.TryGetProperty(name, out var member)) return null;
         if (member.ValueKind == JsonValueKind.True) return true;
@@ -857,6 +896,11 @@ public static class CloudWriteOperations
         {
             notes.Add("本模式的残余风险是预检与发布之间的并发窗口：服务端没有大小写原子去重，"
                 + "这类窗口由写后复查发现并如实报告，不重试、不回滚。");
+        }
+
+        if (state.Executed && state.LedgerAttempted && state.LedgerRecorded == false)
+        {
+            notes.Add("创建已成功，但创建台账写入失败：该对象以后不能通过 nutstore_l3_delete_created_object 撤销。");
         }
 
         return JsonSerializer.Serialize(new
@@ -900,6 +944,7 @@ public static class CloudWriteOperations
             readBackChecked = state.ReadBackChecked ? (bool?)true : null,
             readBackMatches = state.ReadBackMatches,
             readBackSha256 = state.ReadBackSha256,
+            ledgerRecorded = state.LedgerRecorded,
             hook = state.HookVerification, errors = state.VerificationErrors,
         },
         notes = notes,
@@ -960,6 +1005,10 @@ public static class CloudWriteOperations
         public string? ReadBackSha256 { get; set; }
         public bool? LocalSnapshotExists { get; set; }
         public int? LocalSnapshotCount { get; set; }
+
+        /// <summary>是否尝试写创建台账；台账写入结果（false 表示以后不能通过删除工具撤销）。</summary>
+        public bool LedgerAttempted { get; set; }
+        public bool? LedgerRecorded { get; set; }
         public int? RootEntryCount { get; set; }
         public string? HookCloudHash { get; set; }
         public Detail? DirectoryDetail { get; set; }

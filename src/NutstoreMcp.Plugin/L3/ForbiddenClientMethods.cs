@@ -74,6 +74,21 @@ public static class ForbiddenClientMethods
             "改动同步根与应用的关联注册，可能让同步根失去归属。",
     };
 
+    /// <summary>
+    /// 只经**专用工具**（台账限定的删除）放行、通用调用一律禁止的方法名。
+    /// </summary>
+    /// <remarks>
+    /// 这些名字仍然被 <see cref="Check"/> 拒绝 —— 通用桥与反射工具拿不到它们。
+    /// 名单存在的意义是让「专用路径」与「通用路径」的差异被显式记录、可被测试与文档引用，
+    /// 而不是把它们从禁止清单里悄悄移除。
+    /// </remarks>
+    private static readonly HashSet<string> DedicatedOnly = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ClientSymbols.DeleteObject,
+        "DeleteObject",
+        "RemoveObject",
+    };
+
     static ForbiddenClientMethods()
     {
         foreach (var name in ClientSymbols.ForbiddenMethodNames)
@@ -81,6 +96,9 @@ public static class ForbiddenClientMethods
                 throw new InvalidOperationException("共享禁止清单缺少插件拒绝说明：" + name);
         if (Denylist.Count != ClientSymbols.ForbiddenMethodNames.Length)
             throw new InvalidOperationException("插件与共享禁止清单不一致。");
+        foreach (var name in DedicatedOnly)
+            if (!Denylist.ContainsKey(name))
+                throw new InvalidOperationException("专用放行名单里的方法不在禁止清单：" + name);
     }
 
     /// <summary>
@@ -113,14 +131,28 @@ public static class ForbiddenClientMethods
     public static string? Check(string? typeName, string? methodName)
         => IsForbidden(typeName, methodName, out var reason) ? reason : null;
 
+    /// <summary>
+    /// 是否属于「只经专用工具放行」的方法：通用通道仍然拒绝，但专用工具（删除）可以调用。
+    /// </summary>
+    public static bool IsDedicatedOnly(string? methodName)
+        => methodName is not null && DedicatedOnly.Contains(methodName.Trim());
+
     /// <summary>导出清单，供工具与文档共用（避免两处各写一份而悄悄漂移）。</summary>
     public static string Describe() => JsonSerializer.Serialize(new
     {
         count = Denylist.Count,
-        note = "这些方法永不暴露给 MCP：涉及删除、解绑、迁移同步根、会写客户端状态的事件入口，或绕过桥的对象与成员边界。",
+        note = "这些方法对通用调用（桥、反射工具）永不开放：涉及删除、解绑、迁移同步根、"
+            + "会写客户端状态的事件入口，或绕过桥的对象与成员边界。"
+            + "其中 dedicatedOnly 列出的删除入口只经专用删除工具放行（台账 + 版本/哈希匹配）。",
+        dedicatedOnly = DedicatedOnly.OrderBy(name => name, StringComparer.OrdinalIgnoreCase).ToArray(),
         entries = Denylist
             .OrderBy(kv => kv.Key, StringComparer.OrdinalIgnoreCase)
-            .Select(kv => new { method = kv.Key, reason = kv.Value }),
+            .Select(kv => new
+            {
+                method = kv.Key,
+                reason = kv.Value,
+                scope = DedicatedOnly.Contains(kv.Key) ? "dedicated-only" : "all",
+            }),
     }, new JsonSerializerOptions
     {
         WriteIndented = true,

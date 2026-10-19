@@ -209,6 +209,14 @@ public static class PluginEntry
         Path.GetDirectoryName(StateFilePath) ?? ".",
         "read-roots.txt");
 
+    /// <summary>
+    /// 创建台账（jsonl）：每次成功创建文件追加一条，删除工具只认这里登记过的对象。
+    /// 放在令牌文件旁边，与读白名单、写入令牌同一目录。
+    /// </summary>
+    public static string CreatedObjectsFilePath => Path.Combine(
+        Path.GetDirectoryName(StateFilePath) ?? ".",
+        NutstoreMcp.Plugin.L3.CreatedObjectLedger.FileName);
+
     /// <summary>设置界面开关的状态文件路径。</summary>
     public static string StateFilePath => string.IsNullOrEmpty(_stateFile)
         ? Path.Combine(

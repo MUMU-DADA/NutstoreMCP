@@ -258,4 +258,16 @@ public interface IUiHook
     /// </remarks>
     string ReadCloudFileInline(
         long sandboxId, long magic, string localRoot, string cloudPath, long offset, long length);
+
+    /// <summary>
+    /// 删除一个云端普通文件（**仅由专用删除工具调用**）。
+    /// </summary>
+    /// <remarks>
+    /// **会改云端，并会被客户端同步到本地**。调用方必须已经完成创建台账与对象状态校验：
+    /// 本方法只接受「当前详情与预期版本/哈希完全一致」的对象，且只删普通文件，不删目录。
+    /// 删除前再次只读核对，删除后只做只读复查；失败或结果未知不重试、不恢复。
+    /// 通用反射桥仍然禁止经它调用删除入口（禁止清单未变），这条专用路径是唯一通道。
+    /// </remarks>
+    string DeleteCloudObject(
+        long sandboxId, long magic, string localRoot, string cloudPath, long expectedVersion, string expectedHash);
 }

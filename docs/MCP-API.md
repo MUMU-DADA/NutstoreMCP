@@ -5,8 +5,8 @@ NutstoreMCP 把坚果云桌面客户端的查询与管理能力暴露为 MCP 工
 - 版本：插件 1.0.0.0，对应客户端 **7.2.12.0**
 - 传输：Streamable HTTP（只监听本机）
 - 端点：`http://127.0.0.1:17321/mcp`
-- 工具总数：**36**
-- 文档基准：源码 + 在线 `tools/list` + 真实调用返回形状（2026-10-18，`plugin-20261018-114348`）
+- 工具总数：**37**
+- 文档基准：源码 + 在线 `tools/list` + 真实调用返回形状（2026-10-19，`plugin-20261018-234333`，客户端契约已含 `DeleteCloudObject`）
 
 ---
 
@@ -84,8 +84,9 @@ url: http://127.0.0.1:17321/mcp
 
 - 不导出分享链接、分享密码、被邀请者/组名单、客户端会话或传输凭据。
 - 不读取 `nutstore.db` 中的 `encrypted_token` / `device_token` / `bcrypt_pwd_hash`。
-- 删除、解绑、迁移同步根、ACL 写、分享写、文件锁等危险入口不开放（`nutstore_l3_forbidden_methods` 可列出代码级禁止清单）。
-- 写操作只允许在本次新建的测试目标上执行；已有用户对象只读。
+- 解绑、迁移同步根、ACL 写、分享写、文件锁等危险入口不开放（`nutstore_l3_forbidden_methods` 可列出代码级禁止清单）。
+- 删除只有台账限定的一条通道（`nutstore_l3_delete_created_object`）：只删 MCP 自己创建、且当前版本/大小/云端 hash 与创建台账完全一致的文件；禁止清单未放松，通用反射桥仍拒绝删除入口。
+- 写操作只允许在本次新建的测试目标上执行，或经台账限定的自我撤销；已有用户对象只读。
 
 ### 2.6 常见错误
 
@@ -106,7 +107,7 @@ url: http://127.0.0.1:17321/mcp
 | 界面探针 | `nutstore_ui_windows`、`nutstore_ui_tree`、`nutstore_ui_find`、`nutstore_ui_install_toggle`、`nutstore_ui_dump` | 读（install_toggle/dump 写本地界面/文件） |
 | 同步文件夹与账号 | `nutstore_l3_sync_folders`、`nutstore_l3_sync_folder_detail`、`nutstore_l3_create_sync_folder`、`nutstore_l3_create_cloud_folder`、`nutstore_l3_usage`、`nutstore_l3_user_info`、`nutstore_l3_contacts`、`nutstore_l3_search` | 读 + 2 个写 |
 | 云端文件读取 | `nutstore_l3_list_cloud_dir`、`nutstore_l3_object_detail`、`nutstore_l3_file_versions`、`nutstore_l3_share_info`、`nutstore_l3_path_acl`、`nutstore_l3_read_file`、`nutstore_l3_download` | 读（download 写本地） |
-| 云端文件写入 | `nutstore_l3_move`、`nutstore_l3_mkdir`、`nutstore_l3_create_file` | 写 |
+| 云端文件写入 | `nutstore_l3_move`、`nutstore_l3_mkdir`、`nutstore_l3_create_file`、`nutstore_l3_delete_created_object` | 写（删除仅台账限定） |
 | 客户端设置 | `nutstore_l3_read_settings`、`nutstore_l3_write_setting` | 读 / 写 |
 | 事件 | `nutstore_l3_latest_event`、`nutstore_l3_remote_events_page` | 读 |
 
@@ -307,6 +308,15 @@ url: http://127.0.0.1:17321/mcp
 **已有目录模式**：结构保证不成立，改用三层约束 —— ①云端父目录全量列举 + 本地绑定文件夹枚举，任一大小写等价即拒（父路径本身也逐字符核对）；②钩子在上传内容后、提交元数据前再只读确认目标仍不存在；③写后三重复查：父目录恰好多出目标且其余成员路径/类型/版本/哈希未变 → 目标大小/云端 hash/版本 → 整文件回读 SHA-256。父目录成员上限 **100 项**（超过拒绝，无法完整比对）；根目录的详情客户端拒绝查询，根下创建只做列表检查。残余风险是预检与发布之间的并发窗口（服务端无大小写原子去重），按复核结论接受，由写后复查发现并如实报告，不重试、不回滚。  
 **写后复查失败**：只报告，不自动重试、不回滚、不删除。
 
+### `nutstore_l3_delete_created_object`
+**用途**：**台账限定**的删除 —— 只删除 MCP 自己创建、且当前状态与创建台账完全一致的云端普通文件。**写，默认预演，`destructive=true`。**  
+**参数**：`sandboxId`、`magic`、`cloudPath`（必填，以 `/` 开头、不能是根）；`confirm`；`dryRun`。  
+**返回**：`allowed`、`wouldWrite`、`dryRun`、`attempted`、`executed`、`probe{cloudPath, parentPath, localRoot, ledger{createdAt, version, size, hash, tool, contentSource}}`、`refusals[]`、`result`（默认域钩子原始结果）、`verification{ok, detailAfter, deleted, targetPresent, tombstoneWritten, errors[]}`、`notes[]`。  
+**台账**：`%LOCALAPPDATA%\NutstoreMcp\created-objects.jsonl`，每次成功创建文件追加一条 `action=created`（path / version / size / hash / 时间 / 来源工具 / 内容来源）；成功删除后追加一条 `action=deleted`。删除前取该路径**最后一条**记录，必须是 `created`。  
+**门控（缺一不可）**：写入解锁 + `confirm=true` + `dryRun=false`；台账最后一条是 created 且路径**逐字符**一致（大小写别名拒绝）；沙箱 ID 与真实本地绑定匹配；当前详情仍是普通文件、未删除，版本/大小/云端 hash 与台账完全一致（任何一项不符 = 对象已被修改，拒绝）。  
+**行为**：客户端会把云端删除同步到本地绑定目录 —— 这正是「撤销自己刚写入的东西」的预期行为。写后只读复查：详情不再可用或已标记删除、父目录列表里没有它；失败或未知只报告，不重试、不恢复。  
+**边界**：目录、用户已有对象、创建后被修改过的对象、台账缺失或损坏一律拒绝；通用反射桥仍然禁止删除入口（禁止清单未放松），这条专用路径是唯一通道。
+
 ---
 
 ## 9. 客户端设置
@@ -341,5 +351,5 @@ url: http://127.0.0.1:17321/mcp
 ## 11. 兼容性
 
 - 工具绑定依赖客户端 **7.2.12.0** 的内部混淆符号；客户端升级后先跑 `nutstore_l3_verify_call_sites`，再跑 `.\deploy\check-client-bindings.ps1`。
-- `tools/list` 当前 36 项。新增/删除工具必须同步更新本文档。
+- `tools/list` 当前 37 项。新增/删除工具必须同步更新本文档。
 - 本文件是 API 契约，不是安全边界本身：真正的门控在插件与默认域钩子代码里，文档描述不构成绕过理由。
