@@ -193,7 +193,7 @@ internal static class LocalReadPolicy
 
         if (info.Length <= 0)
         {
-            return "本地文件是空的（0 字节）—— 空文件走另一条上传分支，当前不支持：" + full;
+            return "本地文件是空的（0 字节）—— 空文件请改用内联 contentBase64=\"\" 创建：" + full;
         }
 
         if (info.Length > maxBytes)

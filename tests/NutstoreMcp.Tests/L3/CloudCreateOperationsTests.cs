@@ -100,10 +100,9 @@ public class CloudCreateOperationsTests
     }
 
     [Theory]
-    [InlineData(0)]
     [InlineData(-1)]
     [InlineData(CloudWriteOperations.MaxContentBytes + 1)]
-    public void 空内容与超出上限的内容都被拒绝(int length)
+    public void 负长度与超出上限的内容都被拒绝(int length)
     {
         var cloud = new Fake();
         using var result = cloud.Create(contentLength: length);
@@ -111,6 +110,36 @@ public class CloudCreateOperationsTests
         Assert.False(Flag(result, "allowed"));
         Assert.Equal(0, cloud.DirectoryWrites);
         Assert.Equal(0, cloud.FileWrites);
+    }
+
+    [Fact]
+    public void 空内容按空文件分支创建且写后核对大小为零()
+    {
+        // 客户端空文件是特殊分支：跳过内容上传、云端 hash 为 32 个零字节。
+        // 插件这一侧只按「内容长度 0」把它如实传下去，写后照样核对大小与 hash。
+        var cloud = new Fake { CloudHash = CloudContentCodec.EmptyFileHashBase64 };
+        using var result = cloud.Create(contentLength: 0);
+
+        Assert.True(Flag(result, "allowed"));
+        Assert.True(Flag(result, "attempted"));
+        Assert.True(Flag(result, "executed"));
+        Assert.Equal(0, cloud.Objects["/dir/a.txt"].Size);
+        Assert.True(result.RootElement.GetProperty("probe").GetProperty("emptyContent").GetBoolean());
+        Assert.True(result.RootElement.GetProperty("verification").GetProperty("contentMatches").GetBoolean());
+    }
+
+    [Fact]
+    public void 空文件写后哈希不符不能报告成功()
+    {
+        var cloud = new Fake
+        {
+            CloudHash = CloudContentCodec.EmptyFileHashBase64,
+            CorruptFileAfterWrite = true,
+        };
+        using var result = cloud.Create(contentLength: 0);
+
+        Assert.False(Flag(result, "executed"));
+        Assert.False(result.RootElement.GetProperty("verification").GetProperty("contentMatches").GetBoolean());
     }
 
     [Fact]

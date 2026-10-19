@@ -61,13 +61,13 @@ public sealed partial class PluginTools
     }
 
     [McpServerTool(Name = "nutstore_l3_create_file", ReadOnly = false, Destructive = false, Idempotent = false, OpenWorld = true)]
-    [Description("【默认只预演】上传内容并在云端创建一个新文件。需要写入解锁、confirm=true、dryRun=false。安全性来自结构：只允许在**本次调用新建、且建后确认为空**的目录里创建，所以新文件不可能与任何既有对象构成大小写别名（实测别名冲突会触发客户端改名，而改名的同内容/目录分支可能移动或删除既有对象）。目录名与文件名各为一个路径段，不接受多段路径；内容必须非空。内联 base64 不超过 256 KiB；本地文件来源（sourcePath）不超过 16 MiB，超过 393216 字节时走客户端分块上传（按 4 MiB 块 + 块列表 + 多块云端 hash），本地文件来源**默认关闭**（要先把可信目录一行一个写进 %LOCALAPPDATA%\\NutstoreMcp\\read-roots.txt；本地文件只在真正执行时读取，预演不读内容）。提交后核对类型、大小、云端 hash、版本与目录成员；失败或未知只读复查，不重试、不回滚、不删除。")]
+    [Description("【默认只预演】上传内容并在云端创建一个新文件。需要写入解锁、confirm=true、dryRun=false。安全性来自结构：只允许在**本次调用新建、且建后确认为空**的目录里创建，所以新文件不可能与任何既有对象构成大小写别名（实测别名冲突会触发客户端改名，而改名的同内容/目录分支可能移动或删除既有对象）。目录名与文件名各为一个路径段，不接受多段路径；**空文件**传 contentBase64 为空字符串（走客户端空文件分支：跳过内容上传、云端 hash 用 32 个零字节）；非空内联 base64 不超过 256 KiB；本地文件来源（sourcePath）不超过 16 MiB，超过 393216 字节时走客户端分块上传（按 4 MiB 块 + 块列表 + 多块云端 hash），本地文件来源**默认关闭**（要先把可信目录一行一个写进 %LOCALAPPDATA%\\NutstoreMcp\\read-roots.txt；本地文件只在真正执行时读取，预演不读内容）。提交后核对类型、大小、云端 hash、版本与目录成员；失败或未知只读复查，不重试、不回滚、不删除。")]
     public static string L3CreateFile(
         [Description("沙箱 ID")] long sandboxId,
         [Description("沙箱的内部标识")] long magic,
         [Description("新目录名，单个路径段，不能含路径分隔符")] string directoryName,
         [Description("新文件名，单个路径段，不能含路径分隔符")] string fileName,
-        [Description("文件内容的 base64；与 sourcePath 二选一。非空且解码后不超过 256 KiB")] string? contentBase64 = null,
+        [Description("文件内容的 base64；与 sourcePath 二选一。空字符串表示创建空文件；非空时解码后不超过 256 KiB")] string? contentBase64 = null,
         [Description("要上传的本地文件绝对路径；与 contentBase64 二选一，必须落在读取白名单内，且不超过 16 MiB")] string? sourcePath = null,
         [Description("必须显式传 true 才可能执行")] bool confirm = false,
         [Description("默认 true，只预演")] bool dryRun = true)
@@ -75,13 +75,15 @@ public sealed partial class PluginTools
         var ui = PluginEntry.Ui;
         if (ui is null) return UiUnavailable;
 
-        var hasInline = !string.IsNullOrWhiteSpace(contentBase64);
+        // contentBase64 只看「有没有给」：显式给空字符串是合法的空文件请求，
+        // 不能与「没给」混为一谈（否则空文件无法表达）。
+        var hasInline = contentBase64 is not null;
         var hasFile = !string.IsNullOrWhiteSpace(sourcePath);
 
         if (hasInline == hasFile)
         {
             return JsonSerializer.Serialize(
-                new { ok = false, reason = "contentBase64 与 sourcePath 必须且只能给一个。" }, Indented);
+                new { ok = false, reason = "contentBase64 与 sourcePath 必须且只能给一个；创建空文件请显式传 contentBase64=\"\"。" }, Indented);
         }
 
         // 内联模式：先按编码长度挡一次再解码；本地文件模式：只校验路径与大小，**不读内容**

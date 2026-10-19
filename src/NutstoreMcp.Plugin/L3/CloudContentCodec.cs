@@ -81,8 +81,9 @@ internal static class CloudContentCodec
     /// 再对全部记录做一次 SHA-256，结果用普通 Base64。
     /// </summary>
     /// <remarks>
-    /// 不支持空文件：客户端对空内容走另一条分支（32 个零字节），
-    /// 本函数只用于已确认非空的内容。大文件上传时由 <see cref="ComputeFileRecord"/>
+    /// 不支持空文件：客户端对空内容走另一条分支（32 个零字节，见
+    /// <see cref="EmptyFileHashBase64"/>），本函数只用于已确认非空的内容。
+    /// 大文件上传时由 <see cref="ComputeFileRecord"/>
     /// 同时给出每一块的记录与文件级记录。
     /// </remarks>
     public static string CloudHash(byte[] bytes)
@@ -94,6 +95,30 @@ internal static class CloudContentCodec
     /// <summary>URL-safe Base64：把 <c>+</c>/<c>/</c> 换成 <c>-</c>/<c>_</c>，保留 padding。</summary>
     public static string ToUrlSafeBase64(byte[] bytes)
         => Convert.ToBase64String(bytes).Replace('+', '-').Replace('/', '_');
+
+    /// <summary>
+    /// 空文件在客户端的云端 hash：<c>Base64(32 个零字节)</c>。
+    /// </summary>
+    /// <remarks>
+    /// 来自客户端反编译：分块记录生成器在没有任何块时把文件摘要直接设为
+    /// <c>new byte[32]</c>，总长度 0（客户端文件记录生成器的「无块」分支），
+    /// 并且整条空文件路径**跳过内容上传**。
+    /// 元数据里两个对象名不能都为空：<c>fullObjectNameBase64</c> 保持 null，
+    /// <c>blockListNameBase64</c> 用 <see cref="EmptyFileBlockListNameBase64"/>。
+    /// 普通文件不走这两个常量。
+    /// </remarks>
+    public static string EmptyFileHashBase64 => Convert.ToBase64String(new byte[32]);
+
+    /// <summary>
+    /// 空文件的 <c>blockListNameBase64</c>：<c>Base64(40 个零字节)</c>。
+    /// </summary>
+    /// <remarks>
+    /// 40 字节是「文件摘要（32 字节）|| BE64(文件长度)」的文件记录；空文件摘要与长度
+    /// 全为零，所以记录就是 40 个零字节。客户端的 <c>CreateFileParam</c> 校验要求
+    /// <c>blockListNameBase64</c> 与 <c>fullObjectNameBase64</c> **恰好一个非 null**，
+    /// 不能用空字符串代替 null。
+    /// </remarks>
+    public static string EmptyFileBlockListNameBase64 => Convert.ToBase64String(new byte[40]);
 
     /// <summary>
     /// 按客户端算法生成一个文件的全部块记录与文件级记录。

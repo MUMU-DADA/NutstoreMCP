@@ -298,11 +298,12 @@ url: http://127.0.0.1:17321/mcp
 **限制**：父目录必须已存在；目标已存在、不递归创建。
 
 ### `nutstore_l3_create_file`
-**用途**：在云端创建一个新文件；内容可内联或来自白名单本地文件。  
-**参数**：`sandboxId`、`magic`、`directoryName`、`fileName`（必填，各为一个路径段）；`contentBase64` 与 `sourcePath` 二选一；`confirm`；`dryRun`。  
-**返回**：写工具信封；`probe.directory`/`contentBytes`/`contentSource`/`directoryCreated`/`directoryEmpty`；执行后 `result{ok, attempted, contentUploaded, metadataAttempted, metadataSubmitted, cloudPath, size, cloudHash, version, verification, outcome, reason}`。  
-**内容上限**：内联 base64 ≤ 256 KiB；本地文件 ≤ 16 MiB（>393216 字节走 4 MiB 分块 + 块列表上传）。本地文件模式需 `read-roots.txt` 白名单。  
-**结构安全**：只允许在**本次调用新建且建后确认为空**的目录里创建，因此新文件不可能与既有对象构成大小写别名；目录名/文件名各一个路径段，内容非空。
+**用途**：在云端创建一个新文件；内容可内联、为空，或来自白名单本地文件。  
+**参数**：`sandboxId`、`magic`、`directoryName`、`fileName`（必填，各为一个路径段）；`contentBase64` 与 `sourcePath` 二选一（`contentBase64=""` 表示空文件）；`confirm`；`dryRun`。  
+**返回**：写工具信封；`probe.directory`/`contentBytes`/`emptyContent`/`contentSource`/`directoryCreated`/`directoryEmpty`；执行后 `result{ok, attempted, contentUploaded, metadataAttempted, metadataSubmitted, cloudPath, size, emptyFile, cloudHash, version, verification, outcome, reason}`。  
+**内容上限**：内联 base64 ≤ 256 KiB；本地文件 ≤ 16 MiB（>393216 字节走 4 MiB 分块 + 块列表上传）。本地文件模式需 `read-roots.txt` 白名单。空文件只能走内联空内容（本地 0 字节文件会被本地读取策略拒绝，提示改用 `contentBase64=""`）。  
+**空文件分支**：客户端对空内容跳过内容上传，云端 hash 是 `Base64(32 个零字节)`、`blockListNameBase64` 是 `Base64(40 个零字节)`、`fullObjectNameBase64=null`；写后同样核对类型、大小 0、云端 hash、版本与父目录成员。  
+**结构安全**：只允许在**本次调用新建且建后确认为空**的目录里创建，因此新文件不可能与既有对象构成大小写别名；目录名/文件名各一个路径段。
 
 ---
 

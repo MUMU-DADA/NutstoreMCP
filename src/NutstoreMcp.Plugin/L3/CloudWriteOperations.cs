@@ -103,6 +103,10 @@ public static class CloudWriteOperations
     /// 随后创建的文件不可能与任何对象构成大小写别名（上一轮实测的别名冲突会被
     /// 客户端改名，而改名的同内容/目录分支可能移动甚至删除既有对象）。
     /// 客户端 <c>cf02</c> 本体没有查重也没有 noReplace，防覆写完全靠这里的检查。
+    ///
+    /// <paramref name="contentLength"/> 为 0 表示创建空文件：客户端对空内容走特殊分支
+    /// （跳过内容上传、云端 hash 为 32 个零字节、块列表名用 40 个零字节的文件记录），
+    /// 这里只负责把「空」如实传下去，写后仍按类型、大小 0、hash、版本与目录成员核对。
     /// </summary>
     public static string CreateFile(
         bool unlocked, bool confirm, bool dryRun, long id, long magic,
@@ -121,8 +125,8 @@ public static class CloudWriteOperations
         BasicGuards(state, confirm);
         Add(state.Refusals, ValidateSegment(directoryName, "目录名"));
         Add(state.Refusals, ValidateSegment(fileName, "文件名"));
-        if (contentLength <= 0)
-            state.Refusals.Add("内容为空；空文件在客户端走另一条分支（跳过上传、块列表用 40 个零字节），首轮不支持。");
+        if (contentLength < 0)
+            state.Refusals.Add("内容长度不能为负。");
         if (contentLength > maxContentBytes)
             state.Refusals.Add("内容超过 " + maxContentBytes + " 字节上限。");
 
@@ -509,7 +513,23 @@ public static class CloudWriteOperations
         return member.ValueKind == JsonValueKind.String && bool.TryParse(member.GetString(), out var flag) ? flag : null;
     }
 
-    private static string Serialize(State state) => JsonSerializer.Serialize(new
+    private static string Serialize(State state)
+    {
+        var notes = new List<string>
+        {
+            "只调用客户端自己的实现；目标存在或仅大小写冲突均拒绝覆盖。",
+            "attempted 表示已尝试调用，executed 仅在默认域和插件复查都确认成功时为 true。",
+            "失败后只读复查真实状态，不自动重试，也不自动回滚。",
+            state.Operation == "create-file"
+                ? "受限创建只用于本次调用新建、且建后确认为空的目录；父目录非空时不会创建文件。"
+                : "移动与建目录都在真实绑定、父目录和目标冲突核对之后才提交。",
+        };
+        if (state.Operation == "create-file" && state.ContentLength == 0)
+        {
+            notes.Add("内容长度为 0 时走客户端空文件分支：跳过内容上传、云端 hash 用 32 个零字节；写后仍核对大小 0 与云端 hash。");
+        }
+
+        return JsonSerializer.Serialize(new
     {
         allowed = state.Refusals.Count == 0,
         wouldWrite = state.Executed,
@@ -524,6 +544,7 @@ public static class CloudWriteOperations
             sourceParent = state.SourceParent, targetParent = state.TargetParent,
             preflightOk = state.PreflightOk, source = state.SourceDetail?.Summary,
             directory = state.Directory, contentBytes = state.Operation == "create-file" ? state.ContentLength : (int?)null,
+            emptyContent = state.Operation == "create-file" ? state.ContentLength == 0 : (bool?)null,
             contentSource = state.ContentSource,
             directoryCreated = state.Operation == "create-file" ? state.DirectoryCreated : (bool?)null,
             directoryEmpty = state.Operation == "create-file" ? state.DirectoryEmpty : (bool?)null,
@@ -540,16 +561,9 @@ public static class CloudWriteOperations
             directoryVerification = state.DirectoryVerification,
             hook = state.HookVerification, errors = state.VerificationErrors,
         },
-        notes = new[]
-        {
-            "只调用客户端自己的实现；目标存在或仅大小写冲突均拒绝覆盖。",
-            "attempted 表示已尝试调用，executed 仅在默认域和插件复查都确认成功时为 true。",
-            "失败后只读复查真实状态，不自动重试，也不自动回滚。",
-            state.Operation == "create-file"
-                ? "受限创建只用于本次调用新建、且建后确认为空的目录；父目录非空时不会创建文件。"
-                : "移动与建目录都在真实绑定、父目录和目标冲突核对之后才提交。",
-        },
+        notes = notes,
     }, JsonOptions);
+    }
 
     private sealed class Detail
     {

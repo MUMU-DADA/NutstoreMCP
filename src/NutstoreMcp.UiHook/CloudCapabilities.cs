@@ -104,7 +104,9 @@ public sealed partial class UiHook
     ///
     /// 只支持全量上传的小文件：客户端在 393216 字节以下走全量方案，云端 hash 的
     /// 单块公式也已在 49 字节与 53 字节两个真实对象上核对过；多块与大文件未验证。
-    /// 空内容是另一条分支（跳过上传、块列表用 40 个零字节），同样未验证，一并拒绝。
+    /// 空内容是另一条分支：跳过内容上传，云端 hash 用 32 个零字节、
+    /// <c>blockListNameBase64</c> 用 40 个零字节、<c>fullObjectNameBase64</c> 保持 null
+    /// （配方来自客户端反编译，见 <see cref="CloudContentCodec.EmptyFileHashBase64"/>）。
     /// </remarks>
     public string CreateCloudFile(long sandboxId, long magic, string localRoot, string cloudPath, string base64Content)
     {
@@ -114,6 +116,7 @@ public sealed partial class UiHook
         long? submittedVersion = null;
         string? cloudHash = null;
         var size = 0;
+        var empty = false;
         object? box = null;
         object? path = null;
         object? parent = null;
@@ -137,8 +140,7 @@ public sealed partial class UiHook
             }
 
             size = bytes.Length;
-            if (size == 0)
-                return CapabilityCreateFailure(cloudPath, "空文件走另一条客户端分支，首轮不支持", attempted, contentUploaded, metadataAttempted);
+            empty = size == 0;
             if (size > CapabilityMaxContentBytes)
                 return CapabilityCreateFailure(cloudPath,
                     "首轮只支持不超过 " + CapabilityMaxContentBytes + " 字节的内容（全量上传与单块 hash 都已验证的范围）",
@@ -165,36 +167,42 @@ public sealed partial class UiHook
                 .Any(p => string.Equals(p, cloudPath, StringComparison.OrdinalIgnoreCase)))
                 return CapabilityCreateFailure(cloudPath, "目标已存在（含大小写别名），拒绝发布。", attempted, contentUploaded, metadataAttempted);
 
-            var identifierType = FindClientType(ClientSymbols.SandboxIdentifierType)
-                ?? throw new CapabilityFailureException("找不到 SandboxIdentifier");
-            var compressionType = FindClientType(ClientSymbols.CompressionMethodType)
-                ?? throw new CapabilityFailureException("找不到 CompressionMethod");
             var paramType = FindClientType(ClientSymbols.CreateFileParamType)
                 ?? throw new CapabilityFailureException("找不到 CreateFileParam");
-
-            var upload = CapabilityMethod(api, ClientSymbols.UploadFullContent,
-                identifierType, typeof(Stream), typeof(long), typeof(long), compressionType, typeof(string));
             var create = CapabilityMethod(api, ClientSymbols.CreateFileMetadata, paramType);
 
-            cloudHash = CapabilityCloudHash(bytes);
-            var md5 = CapabilityUrlSafeMd5(bytes);
+            // 空文件走客户端的特殊分支：云端 hash 是 32 个零字节、跳过内容上传；
+            // fullObjectNameBase64 保持 null，blockListNameBase64 用 40 个零字节的文件记录。
+            cloudHash = empty ? CloudContentCodec.EmptyFileHashBase64 : CapabilityCloudHash(bytes);
 
+            string? contentName = null;
             attempted = true;
-            var identifier = Activator.CreateInstance(identifierType, sandboxId, magic)
-                ?? throw new CapabilityFailureException("SandboxIdentifier 构造失败");
-            var compression = Enum.Parse(compressionType, "NONE");
-            object? uploaded;
-            using (var stream = new MemoryStream(bytes, writable: false))
+            if (!empty)
             {
-                uploaded = upload.Invoke(null, new[] { identifier, (object)stream, (object)(long)size, (object)(long)size, compression, md5 });
-            }
+                var identifierType = FindClientType(ClientSymbols.SandboxIdentifierType)
+                    ?? throw new CapabilityFailureException("找不到 SandboxIdentifier");
+                var compressionType = FindClientType(ClientSymbols.CompressionMethodType)
+                    ?? throw new CapabilityFailureException("找不到 CompressionMethod");
+                var upload = CapabilityMethod(api, ClientSymbols.UploadFullContent,
+                    identifierType, typeof(Stream), typeof(long), typeof(long), compressionType, typeof(string));
+                var md5 = CapabilityUrlSafeMd5(bytes);
 
-            // 上传入口的返回类型是 string：客户端内部已经把 ObjectNameResponse.name 解出来了，
-            // 直接就是内容对象标识，原样填进 CreateFileParam，不自行变换编码。
-            var contentName = uploaded as string;
-            if (string.IsNullOrWhiteSpace(contentName))
-                throw new CapabilityFailureException("上传没有返回内容对象标识");
-            contentUploaded = true;
+                var identifier = Activator.CreateInstance(identifierType, sandboxId, magic)
+                    ?? throw new CapabilityFailureException("SandboxIdentifier 构造失败");
+                var compression = Enum.Parse(compressionType, "NONE");
+                object? uploaded;
+                using (var stream = new MemoryStream(bytes, writable: false))
+                {
+                    uploaded = upload.Invoke(null, new[] { identifier, (object)stream, (object)(long)size, (object)(long)size, compression, md5 });
+                }
+
+                // 上传入口的返回类型是 string：客户端内部已经把 ObjectNameResponse.name 解出来了，
+                // 直接就是内容对象标识，原样填进 CreateFileParam，不自行变换编码。
+                contentName = uploaded as string;
+                if (string.IsNullOrWhiteSpace(contentName))
+                    throw new CapabilityFailureException("上传没有返回内容对象标识");
+                contentUploaded = true;
+            }
 
             var param = Activator.CreateInstance(paramType)
                 ?? throw new CapabilityFailureException("CreateFileParam 构造失败");
@@ -202,7 +210,7 @@ public sealed partial class UiHook
             CapabilitySetMember(param, "size", (long)size);
             CapabilitySetMember(param, "hashBase64", cloudHash);
             CapabilitySetMember(param, "fullObjectNameBase64", contentName);
-            CapabilitySetMember(param, "blockListNameBase64", null);
+            CapabilitySetMember(param, "blockListNameBase64", empty ? CloudContentCodec.EmptyFileBlockListNameBase64 : null);
             CapabilitySetMember(param, "compressible", false);
             CapabilitySetMember(param, "exAttr", null);
 
@@ -234,6 +242,7 @@ public sealed partial class UiHook
             ("metadataSubmitted", submittedVersion is not null),
             ("cloudPath", cloudPath),
             ("size", size),
+            ("emptyFile", empty),
             ("cloudHash", cloudHash),
             ("version", submittedVersion),
             ("verification", new Json.Raw(verification.Json)),
@@ -250,7 +259,8 @@ public sealed partial class UiHook
     /// 块上传的 name 用 URL-safe Base64(块记录)，块列表的 name 用 URL-safe Base64(文件记录)，
     /// 块列表体是各块 URL-safe Base64(块记录) + CRLF；元数据里 hashBase64 用普通
     /// Base64(文件摘要)，blockListNameBase64 用普通 Base64(文件记录)。
-    /// 空文件与超过 <see cref="CloudContentCodec.MaxFileUploadBytes"/> 的文件拒绝。
+    /// 空文件与超过 <see cref="CloudContentCodec.MaxFileUploadBytes"/> 的文件拒绝；
+    /// 空文件请走内联参数（<c>contentBase64=""</c>），那条路径有独立分支。
     /// 目标存在性仍由调用方保证：本方法只做一次纵深防御检查，不做覆盖与回滚。
     /// </remarks>
     public string CreateCloudFileFromLocalFile(long sandboxId, long magic, string localRoot, string cloudPath,
@@ -275,7 +285,7 @@ public sealed partial class UiHook
                 return CapabilityCreateFailure(cloudPath, validation, attempted, contentUploaded, metadataAttempted);
 
             if (expectedSize <= 0)
-                return CapabilityCreateFailure(cloudPath, "空文件走另一条客户端分支，暂不支持",
+                return CapabilityCreateFailure(cloudPath, "空文件请用 contentBase64=\"\"（内联空内容）走空文件分支",
                     attempted, contentUploaded, metadataAttempted);
             if (expectedSize > CloudContentCodec.MaxFileUploadBytes)
                 return CapabilityCreateFailure(cloudPath,

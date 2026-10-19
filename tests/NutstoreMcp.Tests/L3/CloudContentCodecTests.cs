@@ -196,4 +196,28 @@ public class CloudContentCodecTests
         using var stream = new MemoryStream();
         Assert.Throws<ArgumentException>(() => CloudContentCodec.ComputeFileRecord(stream));
     }
+
+    [Fact]
+    public void 空文件的云端hash是32个零字节的Base64()
+    {
+        // 客户端反编译：没有任何块时文件摘要直接是 new byte[32]，总长度 0。
+        var bytes = Convert.FromBase64String(CloudContentCodec.EmptyFileHashBase64);
+
+        Assert.Equal(32, bytes.Length);
+        Assert.All(bytes, b => Assert.Equal(0, b));
+        Assert.Equal(Convert.ToBase64String(new byte[32]), CloudContentCodec.EmptyFileHashBase64);
+        Assert.Equal(44, CloudContentCodec.EmptyFileHashBase64.Length);
+    }
+
+    [Fact]
+    public void 空文件的块列表名是40个零字节的文件记录()
+    {
+        // 文件记录 = 摘要(32) || BE64(长度)；空文件两项全零，所以是 40 个零字节。
+        var bytes = Convert.FromBase64String(CloudContentCodec.EmptyFileBlockListNameBase64);
+
+        Assert.Equal(40, bytes.Length);
+        Assert.All(bytes, b => Assert.Equal(0, b));
+        Assert.Equal(Convert.ToBase64String(new byte[40]), CloudContentCodec.EmptyFileBlockListNameBase64);
+        Assert.Equal(56, CloudContentCodec.EmptyFileBlockListNameBase64.Length);
+    }
 }
