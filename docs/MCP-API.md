@@ -298,12 +298,14 @@ url: http://127.0.0.1:17321/mcp
 **限制**：父目录必须已存在；目标已存在、不递归创建。
 
 ### `nutstore_l3_create_file`
-**用途**：在云端创建一个新文件；内容可内联、为空，或来自白名单本地文件。  
-**参数**：`sandboxId`、`magic`、`directoryName`、`fileName`（必填，各为一个路径段）；`contentBase64` 与 `sourcePath` 二选一（`contentBase64=""` 表示空文件）；`confirm`；`dryRun`。  
-**返回**：写工具信封；`probe.directory`/`contentBytes`/`emptyContent`/`contentSource`/`directoryCreated`/`directoryEmpty`；执行后 `result{ok, attempted, contentUploaded, metadataAttempted, metadataSubmitted, cloudPath, size, emptyFile, cloudHash, version, verification, outcome, reason}`。  
+**用途**：在云端创建一个新文件；内容可内联、为空，或来自白名单本地文件。父目录有两种模式。  
+**参数**：`sandboxId`、`magic`、`fileName`（必填，一个路径段）；`directoryName`（本次新建的目录名，一个路径段）与 `directoryPath`（已存在的云端目录，以 `/` 开头，`/` 表示沙箱根）二选一；`contentBase64` 与 `sourcePath` 二选一（`contentBase64=""` 表示空文件）；`confirm`；`dryRun`。  
+**返回**：写工具信封；`probe.directory`/`existingDirectory`/`contentBytes`/`emptyContent`/`contentSource`/`parentMembersBefore`/`localSnapshot*`；执行后 `result{ok, attempted, contentUploaded, metadataAttempted, metadataSubmitted, cloudPath, size, emptyFile, cloudHash, version, verification, outcome, reason}`。  
 **内容上限**：内联 base64 ≤ 256 KiB；本地文件 ≤ 16 MiB（>393216 字节走 4 MiB 分块 + 块列表上传）。本地文件模式需 `read-roots.txt` 白名单。空文件只能走内联空内容（本地 0 字节文件会被本地读取策略拒绝，提示改用 `contentBase64=""`）。  
 **空文件分支**：客户端对空内容跳过内容上传，云端 hash 是 `Base64(32 个零字节)`、`blockListNameBase64` 是 `Base64(40 个零字节)`、`fullObjectNameBase64=null`；写后同样核对类型、大小 0、云端 hash、版本与父目录成员。  
-**结构安全**：只允许在**本次调用新建且建后确认为空**的目录里创建，因此新文件不可能与既有对象构成大小写别名；目录名/文件名各一个路径段。
+**新建目录模式**：只允许在**本次调用新建且建后确认为空**的目录里创建，因此新文件不可能与既有对象构成大小写别名。  
+**已有目录模式**：结构保证不成立，改用三层约束 —— ①云端父目录全量列举 + 本地绑定文件夹枚举，任一大小写等价即拒（父路径本身也逐字符核对）；②钩子在上传内容后、提交元数据前再只读确认目标仍不存在；③写后三重复查：父目录恰好多出目标且其余成员路径/类型/版本/哈希未变 → 目标大小/云端 hash/版本 → 整文件回读 SHA-256。父目录成员上限 **100 项**（超过拒绝，无法完整比对）；根目录的详情客户端拒绝查询，根下创建只做列表检查。残余风险是预检与发布之间的并发窗口（服务端无大小写原子去重），按复核结论接受，由写后复查发现并如实报告，不重试、不回滚。  
+**写后复查失败**：只报告，不自动重试、不回滚、不删除。
 
 ---
 

@@ -39,6 +39,7 @@
     <Compile Include="..\..\src\NutstoreMcp.Plugin\L3\CloudObjectPath.cs" Link="L3\CloudObjectPath.cs" />
     <Compile Include="..\..\src\NutstoreMcp.Plugin\L3\CloudWriteOperations.cs" Link="L3\CloudWriteOperations.cs" />
     <Compile Include="..\..\src\NutstoreMcp.Plugin\L3\LocalReadPolicy.cs" Link="L3\LocalReadPolicy.cs" />
+    <Compile Include="..\..\src\NutstoreMcp.Plugin\L3\LocalDirectoryProbe.cs" Link="L3\LocalDirectoryProbe.cs" />
     <Compile Include="..\..\src\NutstoreMcp.Plugin\L3\RemoteEventCodec.cs" Link="L3\RemoteEventCodec.cs" />
     <Compile Include="..\..\src\NutstoreMcp.Plugin\L3\CloudContentCodec.cs" Link="L3\CloudContentCodec.cs" />
     <Compile Include="..\..\src\NutstoreMcp.ClientBindings\ClientSymbols.cs" Link="ClientBindings\ClientSymbols.cs" />

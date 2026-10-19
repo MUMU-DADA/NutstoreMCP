@@ -159,13 +159,10 @@ public sealed partial class UiHook
             listDirectory = CapabilityMethod(api, ClientSymbols.ListDirectory, path.GetType(), typeof(string));
 
             // 纵深防御：父目录必须是有效目录，目标必须不存在（含大小写别名）。
-            var parentDetail = readDetail.Invoke(null, new[] { box, parent });
-            if (parentDetail is null || CapabilityDeleted(parentDetail) || !CapabilityIsDirectory(parentDetail)
-                || !string.Equals(CapabilityBeanPath(parentDetail), parentPath, StringComparison.Ordinal))
-                return CapabilityCreateFailure(cloudPath, "父目录不存在或不是有效目录", attempted, contentUploaded, metadataAttempted);
-            if (CapabilityDirectoryPaths(listDirectory, parent)
-                .Any(p => string.Equals(p, cloudPath, StringComparison.OrdinalIgnoreCase)))
-                return CapabilityCreateFailure(cloudPath, "目标已存在（含大小写别名），拒绝发布。", attempted, contentUploaded, metadataAttempted);
+            var parentError = CapabilityCheckParent(readDetail, listDirectory, box, parent, parentPath, cloudPath,
+                "父目录不存在或不是有效目录", "目标已存在（含大小写别名），拒绝发布。");
+            if (parentError is not null)
+                return CapabilityCreateFailure(cloudPath, parentError, attempted, contentUploaded, metadataAttempted);
 
             var paramType = FindClientType(ClientSymbols.CreateFileParamType)
                 ?? throw new CapabilityFailureException("找不到 CreateFileParam");
@@ -203,6 +200,14 @@ public sealed partial class UiHook
                     throw new CapabilityFailureException("上传没有返回内容对象标识");
                 contentUploaded = true;
             }
+
+            // 提交元数据前**紧邻时刻**再只读确认一次：目标仍不存在（含大小写别名），父目录仍是有效目录。
+            // 预检与发布之间隔着内容上传，这段时间里目标可能出现 —— 那正是要停下的情形。
+            var confirmError = CapabilityCheckParent(readDetail, listDirectory, box, parent, parentPath, cloudPath,
+                "提交前复查：父目录已不是有效目录，拒绝发布",
+                "提交前复查：目标在预检之后出现（含大小写别名），拒绝发布");
+            if (confirmError is not null)
+                throw new CapabilityFailureException(confirmError);
 
             var param = Activator.CreateInstance(paramType)
                 ?? throw new CapabilityFailureException("CreateFileParam 构造失败");
@@ -348,15 +353,10 @@ public sealed partial class UiHook
             listDirectory = CapabilityMethod(api, ClientSymbols.ListDirectory, path.GetType(), typeof(string));
 
             // 纵深防御：父目录必须是有效目录，目标必须不存在（含大小写别名）。
-            var parentDetail = readDetail.Invoke(null, new[] { box, parent });
-            if (parentDetail is null || CapabilityDeleted(parentDetail) || !CapabilityIsDirectory(parentDetail)
-                || !string.Equals(CapabilityBeanPath(parentDetail), parentPath, StringComparison.Ordinal))
-                return CapabilityCreateFailure(cloudPath, "父目录不存在或不是有效目录",
-                    attempted, contentUploaded, metadataAttempted);
-            if (CapabilityDirectoryPaths(listDirectory, parent)
-                .Any(p => string.Equals(p, cloudPath, StringComparison.OrdinalIgnoreCase)))
-                return CapabilityCreateFailure(cloudPath, "目标已存在（含大小写别名），拒绝发布。",
-                    attempted, contentUploaded, metadataAttempted);
+            var parentError = CapabilityCheckParent(readDetail, listDirectory, box, parent, parentPath, cloudPath,
+                "父目录不存在或不是有效目录", "目标已存在（含大小写别名），拒绝发布。");
+            if (parentError is not null)
+                return CapabilityCreateFailure(cloudPath, parentError, attempted, contentUploaded, metadataAttempted);
 
             var identifierType = FindClientType(ClientSymbols.SandboxIdentifierType)
                 ?? throw new CapabilityFailureException("找不到 SandboxIdentifier");
@@ -422,6 +422,13 @@ public sealed partial class UiHook
             }
 
             contentUploaded = true;
+
+            // 同 CreateCloudFile：提交元数据前紧邻时刻再只读确认一次目标仍不存在、父目录仍有效。
+            var confirmError = CapabilityCheckParent(readDetail, listDirectory, box, parent, parentPath, cloudPath,
+                "提交前复查：父目录已不是有效目录，拒绝发布",
+                "提交前复查：目标在预检之后出现（含大小写别名），拒绝发布");
+            if (confirmError is not null)
+                throw new CapabilityFailureException(confirmError);
 
             var param = Activator.CreateInstance(paramType)
                 ?? throw new CapabilityFailureException("CreateFileParam 构造失败");
@@ -754,6 +761,37 @@ public sealed partial class UiHook
             paths.Add(CapabilityPathText(child).TrimEnd('/'));
         }
         return paths;
+    }
+
+    /// <summary>
+    /// 发布前的父目录/目标检查：父目录是未删除的目录，目标不存在（含大小写别名）。
+    /// 返回拒绝说明，<c>null</c> 表示通过。
+    /// </summary>
+    /// <remarks>
+    /// 根路径的详情客户端**明确拒绝查询**（IllegalArgument: You cannot query the full info
+    /// of root path），但根是沙箱结构的一部分，一定存在且是目录 —— 所以父路径为根时跳过详情，
+    /// 只查目标是否已存在。
+    /// </remarks>
+    private static string? CapabilityCheckParent(MethodInfo readDetail, MethodInfo listDirectory, object box,
+        object parent, string parentPath, string cloudPath, string parentMessage, string targetMessage)
+    {
+        if (parentPath != "/")
+        {
+            var parentDetail = readDetail.Invoke(null, new[] { box, parent });
+            if (parentDetail is null || CapabilityDeleted(parentDetail) || !CapabilityIsDirectory(parentDetail)
+                || !string.Equals(CapabilityBeanPath(parentDetail), parentPath, StringComparison.Ordinal))
+            {
+                return parentMessage;
+            }
+        }
+
+        if (CapabilityDirectoryPaths(listDirectory, parent)
+            .Any(p => string.Equals(p, cloudPath, StringComparison.OrdinalIgnoreCase)))
+        {
+            return targetMessage;
+        }
+
+        return null;
     }
 
     private static string CapabilityPathText(object path)

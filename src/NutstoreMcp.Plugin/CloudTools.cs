@@ -61,12 +61,13 @@ public sealed partial class PluginTools
     }
 
     [McpServerTool(Name = "nutstore_l3_create_file", ReadOnly = false, Destructive = false, Idempotent = false, OpenWorld = true)]
-    [Description("【默认只预演】上传内容并在云端创建一个新文件。需要写入解锁、confirm=true、dryRun=false。安全性来自结构：只允许在**本次调用新建、且建后确认为空**的目录里创建，所以新文件不可能与任何既有对象构成大小写别名（实测别名冲突会触发客户端改名，而改名的同内容/目录分支可能移动或删除既有对象）。目录名与文件名各为一个路径段，不接受多段路径；**空文件**传 contentBase64 为空字符串（走客户端空文件分支：跳过内容上传、云端 hash 用 32 个零字节）；非空内联 base64 不超过 256 KiB；本地文件来源（sourcePath）不超过 16 MiB，超过 393216 字节时走客户端分块上传（按 4 MiB 块 + 块列表 + 多块云端 hash），本地文件来源**默认关闭**（要先把可信目录一行一个写进 %LOCALAPPDATA%\\NutstoreMcp\\read-roots.txt；本地文件只在真正执行时读取，预演不读内容）。提交后核对类型、大小、云端 hash、版本与目录成员；失败或未知只读复查，不重试、不回滚、不删除。")]
+    [Description("【默认只预演】上传内容并在云端创建一个新文件。需要写入解锁、confirm=true、dryRun=false。父目录有两种模式：**新建目录**（directoryName，沿用结构安全：只允许在**本次调用新建、且建后确认为空**的目录里创建，实测别名冲突会触发客户端改名，而改名的同内容/目录分支可能移动或删除既有对象）或**已有目录**（directoryPath，两端预检：云端父目录全量列举 + 本地绑定文件夹枚举，任一大小写等价即拒绝；提交元数据前再复查一次；写后确认父目录只多出目标、其余成员版本/哈希未变，并把云端字节整文件回读核对 SHA-256；父目录成员上限 100 项）。fileName 与新建目录名各为一个路径段。**空文件**传 contentBase64 为空字符串（走客户端空文件分支：跳过内容上传、云端 hash 用 32 个零字节）；非空内联 base64 不超过 256 KiB；本地文件来源（sourcePath）不超过 16 MiB，超过 393216 字节时走客户端分块上传（按 4 MiB 块 + 块列表 + 多块云端 hash），本地文件来源**默认关闭**（要先把可信目录一行一个写进 %LOCALAPPDATA%\\NutstoreMcp\\read-roots.txt；本地文件只在真正执行时读取，预演不读内容）。失败或未知只读复查，不重试、不回滚、不删除。")]
     public static string L3CreateFile(
         [Description("沙箱 ID")] long sandboxId,
         [Description("沙箱的内部标识")] long magic,
-        [Description("新目录名，单个路径段，不能含路径分隔符")] string directoryName,
         [Description("新文件名，单个路径段，不能含路径分隔符")] string fileName,
+        [Description("本次新建的目录名，单个路径段；与 directoryPath 二选一")] string? directoryName = null,
+        [Description("已存在的云端目录路径，以 / 开头（/ 表示沙箱根）；与 directoryName 二选一")] string? directoryPath = null,
         [Description("文件内容的 base64；与 sourcePath 二选一。空字符串表示创建空文件；非空时解码后不超过 256 KiB")] string? contentBase64 = null,
         [Description("要上传的本地文件绝对路径；与 contentBase64 二选一，必须落在读取白名单内，且不超过 16 MiB")] string? sourcePath = null,
         [Description("必须显式传 true 才可能执行")] bool confirm = false,
@@ -86,6 +87,15 @@ public sealed partial class PluginTools
                 new { ok = false, reason = "contentBase64 与 sourcePath 必须且只能给一个；创建空文件请显式传 contentBase64=\"\"。" }, Indented);
         }
 
+        // 父目录二选一：本次新建（directoryName）或已存在（directoryPath）。
+        var hasNewDirectory = directoryName is not null;
+        var hasExistingDirectory = directoryPath is not null;
+        if (hasNewDirectory == hasExistingDirectory)
+        {
+            return JsonSerializer.Serialize(
+                new { ok = false, reason = "directoryName（本次新建目录）与 directoryPath（已存在目录）必须且只能给一个。" }, Indented);
+        }
+
         // 内联模式：先按编码长度挡一次再解码；本地文件模式：只校验路径与大小，**不读内容**
         // （内容留到真正执行那一步，预演不碰文件内容）。
         string encoded = string.Empty;
@@ -94,6 +104,7 @@ public sealed partial class PluginTools
         string? sourceFilePath = null;
         long sourceFileLength = 0;
         Func<string> readContent = () => string.Empty;
+        Func<string> expectedSha256;
 
         if (hasInline)
         {
@@ -118,6 +129,10 @@ public sealed partial class PluginTools
             contentSource = "inline-base64";
             var payload = encoded;
             readContent = () => payload;
+
+            // 内容是不变的字符串，期望的 SHA-256 在这里算一次即可。
+            var sha = CloudContentCodec.Sha256Hex(decoded);
+            expectedSha256 = () => sha;
         }
         else
         {
@@ -134,27 +149,60 @@ public sealed partial class PluginTools
             contentSource = "file:" + canonicalPath;
             sourceFilePath = canonicalPath!;
             sourceFileLength = fileLength;
+
+            // 回读校验要在写完之后再读一次本地文件：上传与校验之间文件被改动就会不一致，
+            // 那正是要报告而不是猜的情形。
+            var pathForHash = sourceFilePath;
+            var lengthForHash = sourceFileLength;
+            expectedSha256 = () => CloudContentCodec.Sha256Hex(
+                LocalReadPolicy.ReadExactly(pathForHash!, lengthForHash));
         }
 
         try
         {
             var bindings = ui.ReadClientSyncFolders();
             var root = BoundRoot(bindings, sandboxId, magic);
-            var directory = "/" + directoryName;
-            var target = directory + "/" + fileName;
-            Func<string> createFile = sourceFilePath is not null
-                ? () => ui.CreateCloudFileFromLocalFile(sandboxId, magic, root ?? string.Empty, target, sourceFilePath, sourceFileLength)
-                : () => ui.CreateCloudFile(sandboxId, magic, root ?? string.Empty, target, readContent());
-            return CloudWriteOperations.CreateFile(
-                PluginEntry.IsWriteUnlocked(), confirm, dryRun, sandboxId, magic, directoryName, fileName,
+            var contentLimit = sourceFilePath is not null
+                ? CloudContentCodec.MaxFileUploadBytes
+                : CloudWriteOperations.MaxContentBytes;
+
+            if (hasNewDirectory)
+            {
+                var directory = "/" + directoryName;
+                var target = directory + "/" + fileName;
+                Func<string> createFile = sourceFilePath is not null
+                    ? () => ui.CreateCloudFileFromLocalFile(sandboxId, magic, root ?? string.Empty, target, sourceFilePath, sourceFileLength)
+                    : () => ui.CreateCloudFile(sandboxId, magic, root ?? string.Empty, target, readContent());
+                return CloudWriteOperations.CreateFile(
+                    PluginEntry.IsWriteUnlocked(), confirm, dryRun, sandboxId, magic, directoryName!, fileName,
+                    contentLength,
+                    () => bindings,
+                    path => ui.ListCloudDirectory(sandboxId, magic, path),
+                    path => ui.ReadObjectDetail(sandboxId, magic, root ?? string.Empty, LocalObjectPath(root, path)),
+                    () => ui.CreateCloudDirectory(sandboxId, magic, root ?? string.Empty, directory),
+                    createFile,
+                    contentSource,
+                    maxContentBytes: contentLimit);
+            }
+
+            var existingDirectory = directoryPath!;
+            var existingTarget = (existingDirectory == "/" ? string.Empty : existingDirectory) + "/" + fileName;
+            Func<string> createFileInDirectory = sourceFilePath is not null
+                ? () => ui.CreateCloudFileFromLocalFile(sandboxId, magic, root ?? string.Empty, existingTarget, sourceFilePath, sourceFileLength)
+                : () => ui.CreateCloudFile(sandboxId, magic, root ?? string.Empty, existingTarget, readContent());
+            return CloudWriteOperations.CreateFileInExistingDirectory(
+                PluginEntry.IsWriteUnlocked(), confirm, dryRun, sandboxId, magic, existingDirectory, fileName,
                 contentLength,
                 () => bindings,
                 path => ui.ListCloudDirectory(sandboxId, magic, path),
                 path => ui.ReadObjectDetail(sandboxId, magic, root ?? string.Empty, LocalObjectPath(root, path)),
-                () => ui.CreateCloudDirectory(sandboxId, magic, root ?? string.Empty, directory),
-                createFile,
+                (localRoot, cloudDir) => LocalDirectoryProbe.Inspect(localRoot, cloudDir),
+                createFileInDirectory,
+                (path, offset, length) => ui.ReadCloudFileInline(
+                    sandboxId, magic, root ?? string.Empty, path, offset, length),
+                expectedSha256,
                 contentSource,
-                maxContentBytes: sourceFilePath is not null ? CloudContentCodec.MaxFileUploadBytes : CloudWriteOperations.MaxContentBytes);
+                maxContentBytes: contentLimit);
         }
         catch (Exception ex) { return Error(ex); }
     }

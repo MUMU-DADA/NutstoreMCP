@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Text;
 using System.Text.Json;
 
 namespace NutstoreMcp.Plugin.L3;
@@ -176,6 +177,127 @@ public static class CloudWriteOperations
         return Serialize(state);
     }
 
+    /// <summary>
+    /// 父目录成员数的自设上限。超过就拒绝创建 —— 写后复查要逐个核对既有成员的
+    /// 版本与哈希，成员太多时无法在可接受的时间内完成完整比对。
+    /// </summary>
+    public const int MaxExistingDirectoryMembers = 100;
+
+    /// <summary>
+    /// P1：在**已存在**的云端目录里创建一个新文件。
+    ///
+    /// 与 <see cref="CreateFile"/> 的区别只是「父目录不是本次新建」，所以安全性不再来自
+    /// 「空目录」这一结构，而来自三层约束：
+    /// <list type="number">
+    /// <item>两端预检：云端父目录全量列举 + 本地绑定文件夹枚举，任一大小写等价即拒绝；
+    /// 父路径本身也必须逐字符一致（云端详情回读 + 本地逐段大小写核对）。</item>
+    /// <item>提交前复查：默认域钩子上传内容后、提交元数据前再只读确认目标仍不存在。</item>
+    /// <item>写后三重复查：父目录恰好多出目标且其余成员版本/哈希不变 → 目标大小/hash/版本
+    /// → 把云端字节整文件读回来核对 SHA-256。任何不符只报告，不重试、不回滚。</item>
+    /// </list>
+    ///
+    /// 残余风险：预检与发布之间存在并发窗口（服务端没有大小写原子去重，已实测确认）。
+    /// 这一点按复核结论接受。
+    /// </summary>
+    /// <param name="expectedSha256">返回期望内容的 SHA-256（小写十六进制）；在写后复查时调用。</param>
+    /// <param name="readInline">按区间读取云端文件内容，返回钩子的 JSON（含 text/contentBase64）。</param>
+    /// <param name="probeLocal">本地侧预检：给定绑定根与云端目录，返回本地枚举结果。</param>
+    public static string CreateFileInExistingDirectory(
+        bool unlocked, bool confirm, bool dryRun, long id, long magic,
+        string cloudDirectory, string fileName, int contentLength,
+        Func<string> bindings, Func<string, string> listDirectory, Func<string, string> readDetail,
+        Func<string, string, LocalDirectoryProbe.Result> probeLocal,
+        Func<string> executeCreateFile,
+        Func<string, long, long, string> readInline,
+        Func<string> expectedSha256,
+        string? contentSource = null, int maxContentBytes = MaxContentBytes)
+    {
+        var target = (cloudDirectory == "/" ? string.Empty : cloudDirectory) + "/" + fileName;
+        var state = new State("create-file-existing", unlocked, dryRun, id, magic, null, target);
+        state.Directory = cloudDirectory;
+        state.ContentLength = contentLength;
+        state.ContentSource = contentSource;
+        state.ExistingDirectory = true;
+
+        BasicGuards(state, confirm);
+        Add(state.Refusals, CloudObjectPath.Validate(cloudDirectory, allowRoot: true));
+        Add(state.Refusals, ValidateSegment(fileName, "文件名"));
+        if (contentLength < 0)
+            state.Refusals.Add("内容长度不能为负。");
+        if (contentLength > maxContentBytes)
+            state.Refusals.Add("内容超过 " + maxContentBytes + " 字节上限。");
+
+        if (state.Refusals.Count == 0)
+        {
+            state.LocalRoot = ReadBinding(bindings, id, magic, state.Refusals);
+            if (state.Refusals.Count == 0)
+            {
+                // 云端父目录必须是未删除的真实目录；ReadDetail 要求返回路径逐字符一致，
+                // 因此父路径本身的大小写别名也会在这里被挡住。
+                // 例外：根路径的详情客户端明确拒绝查询（You cannot query the full info of root path），
+                // 而根一定存在且是目录，所以只跳过详情这一步，目标冲突仍由列表检查。
+                if (!string.Equals(cloudDirectory, "/", StringComparison.Ordinal))
+                {
+                    state.DirectoryDetail = ReadDetail(readDetail, cloudDirectory, state.Refusals, "父目录详情");
+                    ValidateDirectory(state.DirectoryDetail, state.Refusals, "父目录 " + cloudDirectory);
+                }
+
+                var entries = ReadDirectory(listDirectory, cloudDirectory, state.Refusals);
+                if (entries is not null && state.Refusals.Count == 0)
+                {
+                    if (ContainsTarget(entries, target))
+                    {
+                        state.Refusals.Add("目标已存在或有大小写冲突，拒绝创建：" + target);
+                    }
+                    else if (entries.Count > MaxExistingDirectoryMembers)
+                    {
+                        state.Refusals.Add("父目录有 " + entries.Count + " 个成员，超过 " + MaxExistingDirectoryMembers
+                            + " 项上限，拒绝创建（无法完整比对全部成员）。");
+                    }
+                    else
+                    {
+                        state.BeforeMembers = SnapshotMembers(entries, target, readDetail, state.Refusals);
+                        state.MemberCountBefore = state.BeforeMembers?.Count;
+                    }
+                }
+
+                if (state.Refusals.Count == 0)
+                {
+                    // 本地一侧：客户端的冲突改名/删除分支同样会作用到本地真实文件。
+                    var local = probeLocal(state.LocalRoot!, cloudDirectory);
+                    state.LocalSnapshotExists = local.PathExists;
+                    state.LocalSnapshotCount = local.Entries.Count;
+                    if (local.Error is not null)
+                    {
+                        state.Refusals.Add(local.Error);
+                    }
+                    else if (local.PathExists)
+                    {
+                        var collision = LocalDirectoryProbe.FindCaseInsensitiveCollision(local.Entries, fileName);
+                        if (collision is not null)
+                            state.Refusals.Add("本地绑定文件夹里已有同名或大小写别名：" + collision + "，拒绝创建。");
+                    }
+                }
+
+                state.PreflightOk = state.Refusals.Count == 0;
+            }
+        }
+
+        if (state.PreflightOk && !dryRun)
+        {
+            Execute(state, executeCreateFile);
+            state.HookCloudHash = state.Result is { } result && Text(result, "cloudHash") is { } hash ? hash : null;
+            // 只有钩子报告成功时才做写后复查：失败/未知时目标状态没有可信前提，
+            // 但仍把钩子给的原因原样带出去，不做任何自动重试或回滚。
+            if (state.HookOk)
+            {
+                VerifyCreateFileInExisting(state, listDirectory, readDetail, readInline, expectedSha256);
+            }
+        }
+
+        return Serialize(state);
+    }
+
     /// <summary>单个路径段的命名规则；工具不接受调用方给出的多段路径。</summary>
     private static string? ValidateSegment(string name, string label)
     {
@@ -217,6 +339,205 @@ public static class CloudWriteOperations
         if (state.ContentMatches != true)
             state.VerificationErrors.Add("写后文件的大小或云端 hash 与本次上传的内容不一致。");
         FinishVerification(state);
+    }
+
+    /// <summary>P1 写后三重复查：父目录成员、目标详情、整文件回读字节。</summary>
+    private static void VerifyCreateFileInExisting(State state, Func<string, string> list,
+        Func<string, string> detail, Func<string, long, long, string> readInline, Func<string> expectedSha256)
+    {
+        state.VerificationChecked = true;
+
+        // ── 第一重：父目录正好多出目标，其余成员一个不变（路径/类型/版本/哈希/大小）──
+        var entries = ReadDirectory(list, state.Directory!, state.VerificationErrors);
+        if (entries is not null)
+        {
+            var exact = entries.Count(path => string.Equals(path, state.Target, StringComparison.Ordinal));
+            var aliases = entries.Count(path => string.Equals(path, state.Target, StringComparison.OrdinalIgnoreCase)) - exact;
+            state.TargetPresent = exact == 1 && aliases == 0;
+            if (state.TargetPresent != true)
+                state.VerificationErrors.Add("写后新文件没有唯一、逐字符地出现在父目录里（含大小写别名检查）。");
+
+            var after = SnapshotMembers(entries, state.Target, detail, state.VerificationErrors);
+            state.MemberCountAfter = after?.Count;
+            if (after is not null && state.BeforeMembers is not null)
+            {
+                state.MembersUnchanged = SameMembers(state.BeforeMembers, after);
+                if (state.MembersUnchanged != true)
+                    state.VerificationErrors.Add("写后父目录里既有成员发生了变化（数量、路径、类型、版本或哈希不一致）。");
+            }
+            else if (state.BeforeMembers is null)
+            {
+                state.VerificationErrors.Add("没有可用的写前成员快照，无法确认父目录其他成员未变。");
+            }
+        }
+
+        // ── 第二重：目标自身的大小、云端 hash、版本 ──
+        state.TargetDetail = ReadDetail(detail, state.Target, state.VerificationErrors, "写后文件详情");
+        ValidateFile(state.TargetDetail, state.VerificationErrors, "写后文件");
+        if (state.TargetDetail?.Size is { } size) state.ContentMatches = size == state.ContentLength;
+        if (state.HookCloudHash is not null && state.TargetDetail?.Hash is not null)
+            state.ContentMatches = state.ContentMatches == true
+                && string.Equals(state.HookCloudHash, state.TargetDetail.Hash, StringComparison.Ordinal);
+        if (state.ContentMatches != true)
+            state.VerificationErrors.Add("写后文件的大小或云端 hash 与本次上传的内容不一致。");
+
+        // ── 第三重：把云端字节整文件读回来，SHA-256 与期望内容一致 ──
+        VerifyReadBack(state, readInline, expectedSha256);
+
+        FinishVerification(state);
+    }
+
+    /// <summary>按 256 KiB 分段把云端文件读回来（与读取侧上限一致），整文件算一次 SHA-256。</summary>
+    private static void VerifyReadBack(State state, Func<string, long, long, string> readInline,
+        Func<string> expectedSha256)
+    {
+        state.ReadBackChecked = true;
+
+        string? expected;
+        try
+        {
+            expected = expectedSha256();
+        }
+        catch (Exception ex)
+        {
+            state.VerificationErrors.Add("拿不到期望内容的 SHA-256（" + ex.GetType().Name + "），无法回读校验。");
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(expected))
+        {
+            state.VerificationErrors.Add("期望内容的 SHA-256 为空，无法回读校验。");
+            return;
+        }
+
+        using var all = new MemoryStream();
+        long offset = 0;
+        const int chunk = 256 * 1024;
+        while (offset < state.ContentLength)
+        {
+            var want = (int)Math.Min(chunk, state.ContentLength - offset);
+            var json = ReadJson(() => readInline(state.Target, offset, want), state.VerificationErrors, "回读分段");
+            if (json is null) return;
+
+            var value = json.Value;
+            if (!IsTrue(value, "ok")
+                || !TryLong(value, "offset", out var returnedOffset) || returnedOffset != offset
+                || !TryLong(value, "length", out var returnedLength) || returnedLength != want)
+            {
+                state.VerificationErrors.Add("回读分段返回的范围与请求不一致。");
+                return;
+            }
+
+            var segment = ReadSegmentBytes(value, state.VerificationErrors);
+            if (segment is null) return;
+            if (segment.Length != want)
+            {
+                state.VerificationErrors.Add("回读分段的字节数与请求不一致。");
+                return;
+            }
+
+            all.Write(segment, 0, segment.Length);
+            offset += want;
+        }
+
+        var bytes = all.ToArray();
+        if (bytes.Length != state.ContentLength)
+        {
+            state.VerificationErrors.Add("回读到的总字节数与期望内容不一致。");
+            return;
+        }
+
+        var actual = CloudContentCodec.Sha256Hex(bytes);
+        state.ReadBackSha256 = actual;
+        state.ReadBackMatches = string.Equals(actual, expected, StringComparison.OrdinalIgnoreCase);
+        if (state.ReadBackMatches != true)
+            state.VerificationErrors.Add("写后回读的字节与期望内容不一致（SHA-256 不匹配）。");
+    }
+
+    /// <summary>从读取侧返回的 JSON 里还原原始字节：二进制走 contentBase64，文本走 text（BOM 补回）。</summary>
+    private static byte[]? ReadSegmentBytes(JsonElement value, List<string> errors)
+    {
+        if (value.TryGetProperty("contentBase64", out var base64) && base64.ValueKind == JsonValueKind.String)
+        {
+            try
+            {
+                return Convert.FromBase64String(base64.GetString()!);
+            }
+            catch (FormatException)
+            {
+                errors.Add("回读分段不是有效的 base64。");
+                return null;
+            }
+        }
+
+        if (value.TryGetProperty("text", out var text) && text.ValueKind == JsonValueKind.String)
+        {
+            var bytes = Encoding.UTF8.GetBytes(text.GetString()!);
+
+            // 读取侧会把 UTF-8 BOM 从文本里剥掉并单独标记；校验字节时必须补回来。
+            if (ReadBool(value, "bom") == true)
+            {
+                var withBom = new byte[bytes.Length + 3];
+                withBom[0] = 0xEF;
+                withBom[1] = 0xBB;
+                withBom[2] = 0xBF;
+                Buffer.BlockCopy(bytes, 0, withBom, 3, bytes.Length);
+                return withBom;
+            }
+
+            return bytes;
+        }
+
+        errors.Add("回读分段既没有 contentBase64 也没有 text。");
+        return null;
+    }
+
+    /// <summary>父目录成员快照；目标自身（含大小写别名）不进入成员列表。</summary>
+    private static List<DirectoryMember>? SnapshotMembers(List<string> entries, string target,
+        Func<string, string> detail, List<string> errors)
+    {
+        var members = new List<DirectoryMember>();
+        foreach (var entry in entries)
+        {
+            if (string.Equals(entry, target, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            var memberDetail = ReadDetail(detail, entry, errors, "父目录成员详情 " + entry);
+            if (memberDetail is null) return null;
+            members.Add(new DirectoryMember(entry, memberDetail.Type, memberDetail.Version,
+                memberDetail.Hash, memberDetail.Size, memberDetail.Deleted));
+        }
+
+        return members;
+    }
+
+    /// <summary>两份成员快照是否完全一致（路径逐字符比较，大小写改名也算变化）。</summary>
+    private static bool SameMembers(List<DirectoryMember> before, List<DirectoryMember> after)
+    {
+        if (before.Count != after.Count) return false;
+
+        var index = new Dictionary<string, DirectoryMember>(StringComparer.Ordinal);
+        foreach (var member in after)
+        {
+            index[member.Path] = member;
+        }
+
+        foreach (var member in before)
+        {
+            if (!index.TryGetValue(member.Path, out var other)) return false;
+            if (!string.Equals(member.Type, other.Type, StringComparison.Ordinal)
+                || member.Version != other.Version
+                || !string.Equals(member.Hash, other.Hash, StringComparison.Ordinal)
+                || member.Size != other.Size
+                || member.Deleted != other.Deleted)
+            {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     private static void BasicGuards(State state, bool confirm)
@@ -520,13 +841,22 @@ public static class CloudWriteOperations
             "只调用客户端自己的实现；目标存在或仅大小写冲突均拒绝覆盖。",
             "attempted 表示已尝试调用，executed 仅在默认域和插件复查都确认成功时为 true。",
             "失败后只读复查真实状态，不自动重试，也不自动回滚。",
-            state.Operation == "create-file"
-                ? "受限创建只用于本次调用新建、且建后确认为空的目录；父目录非空时不会创建文件。"
-                : "移动与建目录都在真实绑定、父目录和目标冲突核对之后才提交。",
+            state.ExistingDirectory
+                ? "已有目录创建：云端父目录与本地绑定文件夹两端预检，任一大小写别名即拒绝；"
+                    + "写后确认父目录只多出目标、其余成员版本/哈希未变，并把云端字节整文件回读核对 SHA-256。"
+                : state.Operation == "create-file"
+                    ? "受限创建只用于本次调用新建、且建后确认为空的目录；父目录非空时不会创建文件。"
+                    : "移动与建目录都在真实绑定、父目录和目标冲突核对之后才提交。",
         };
         if (state.Operation == "create-file" && state.ContentLength == 0)
         {
             notes.Add("内容长度为 0 时走客户端空文件分支：跳过内容上传、云端 hash 用 32 个零字节；写后仍核对大小 0 与云端 hash。");
+        }
+
+        if (state.ExistingDirectory)
+        {
+            notes.Add("本模式的残余风险是预检与发布之间的并发窗口：服务端没有大小写原子去重，"
+                + "这类窗口由写后复查发现并如实报告，不重试、不回滚。");
         }
 
         return JsonSerializer.Serialize(new
@@ -543,11 +873,16 @@ public static class CloudWriteOperations
             srcCloudPath = state.Source, destCloudPath = state.Target, localRoot = state.LocalRoot,
             sourceParent = state.SourceParent, targetParent = state.TargetParent,
             preflightOk = state.PreflightOk, source = state.SourceDetail?.Summary,
-            directory = state.Directory, contentBytes = state.Operation == "create-file" ? state.ContentLength : (int?)null,
-            emptyContent = state.Operation == "create-file" ? state.ContentLength == 0 : (bool?)null,
+            directory = state.Directory,
+            existingDirectory = state.ExistingDirectory,
+            contentBytes = state.ExistingDirectory || state.Operation == "create-file" ? state.ContentLength : (int?)null,
+            emptyContent = state.ExistingDirectory || state.Operation == "create-file" ? state.ContentLength == 0 : (bool?)null,
             contentSource = state.ContentSource,
             directoryCreated = state.Operation == "create-file" ? state.DirectoryCreated : (bool?)null,
             directoryEmpty = state.Operation == "create-file" ? state.DirectoryEmpty : (bool?)null,
+            parentMembersBefore = state.MemberCountBefore,
+            localSnapshotExists = state.LocalSnapshotExists,
+            localSnapshotCount = state.LocalSnapshotCount,
         },
         refusals = state.Refusals,
         result = state.Result,
@@ -559,11 +894,20 @@ public static class CloudWriteOperations
             contentMatches = state.ContentMatches, target = state.TargetDetail?.Summary,
             directory = state.DirectoryDetail?.Summary,
             directoryVerification = state.DirectoryVerification,
+            memberCountBefore = state.MemberCountBefore,
+            memberCountAfter = state.MemberCountAfter,
+            membersUnchanged = state.MembersUnchanged,
+            readBackChecked = state.ReadBackChecked ? (bool?)true : null,
+            readBackMatches = state.ReadBackMatches,
+            readBackSha256 = state.ReadBackSha256,
             hook = state.HookVerification, errors = state.VerificationErrors,
         },
         notes = notes,
     }, JsonOptions);
     }
+
+    /// <summary>父目录成员快照：写后复查用它对每个既有成员比对路径、类型、版本与哈希。</summary>
+    private sealed record DirectoryMember(string Path, string? Type, long? Version, string? Hash, long? Size, bool? Deleted);
 
     private sealed class Detail
     {
@@ -604,6 +948,18 @@ public static class CloudWriteOperations
         public string? ContentSource { get; set; }
         public bool DirectoryCreated { get; set; }
         public bool? DirectoryEmpty { get; set; }
+
+        /// <summary>本次是否「已存在目录」模式（P1）；该模式下不新建父目录。</summary>
+        public bool ExistingDirectory { get; set; }
+        public List<DirectoryMember>? BeforeMembers { get; set; }
+        public int? MemberCountBefore { get; set; }
+        public int? MemberCountAfter { get; set; }
+        public bool? MembersUnchanged { get; set; }
+        public bool ReadBackChecked { get; set; }
+        public bool? ReadBackMatches { get; set; }
+        public string? ReadBackSha256 { get; set; }
+        public bool? LocalSnapshotExists { get; set; }
+        public int? LocalSnapshotCount { get; set; }
         public int? RootEntryCount { get; set; }
         public string? HookCloudHash { get; set; }
         public Detail? DirectoryDetail { get; set; }
