@@ -14,7 +14,23 @@
 
 共 **39** 个工具，参数、返回与门控的完整说明见 [MCP-API](docs/MCP-API.md)。
 
-## 快速开始
+## 安装（推荐：发布包）
+
+发布包不需要 .NET SDK、不需要编译源码，解压后运行一个脚本即可：
+
+1. 到 [Releases](https://github.com/MUMU-DADA/NutstoreMCP/releases) 下载最新的 `NutstoreMCP-v*-win-x64.zip`；
+2. 解压整个目录，运行：
+
+   ```powershell
+   powershell -ExecutionPolicy Bypass -File .\Install-NutstoreMCP.ps1
+   ```
+
+   脚本会自动申请管理员权限（需要一次 UAC）：停客户端 → 装桥 → 原子修改客户端配置 → 部署插件 → 重启客户端 → 等待 MCP 端点就绪；
+3. 把 `transport: streamable-http`、`url: http://127.0.0.1:17321/mcp` 加到 MCP 客户端配置。
+
+卸载：同目录 `Uninstall-NutstoreMCP.ps1`（默认保留日志与台账）。发布包只支持坚果云客户端 **7.2.12.0**；从旧版本升级需重新运行安装脚本（客户端契约有更新）。
+
+## 从源码运行
 
 ```powershell
 .\verify.ps1                     # 构建 + 主测试 + WPF 探针 + 配置补丁 + 绑定检查
